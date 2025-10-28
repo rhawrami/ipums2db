@@ -12,7 +12,7 @@ type Var struct {
 	Name         string    `xml:"name,attr"`   // "readable" variable name
 	Label        string    `xml:"labl"`        // actual variable name
 	VType        VarFormat `xml:"varFormat"`   // variable type
-	DecimalPoint string    `xml:"dcml,attr"`   // implied decimal point, if any
+	DecimalPoint int       `xml:"dcml,attr"`   // implied decimal point, if any
 	Interval     string    `xml:"intrvl,attr"` // interval type (discrete v. continuous)
 	Location     Loc       `xml:"location"`    // location within line
 	Cats         []Cat     `xml:"catgry"`      // if discrete, values/labels per category

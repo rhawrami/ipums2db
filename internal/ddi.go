@@ -2,6 +2,18 @@
 // from data-dictionary parsing to SQL statement creation
 package internal
 
+import "fmt"
+
+// LineWidth calculates the line width (# chars + newline)
+// for an IPUMS extract, using the data dictionary
+func LineWidth(dd *DataDict) (int, error) {
+	if len(dd.Vars) == 0 {
+		return 0, fmt.Errorf("no variables found, unable to calculate line width")
+	}
+	lw := dd.Vars[len(dd.Vars)-1].Location.End + 1 // add newline
+	return lw, nil
+}
+
 // DataDict represents an IPUMS xml-decoded data dictionary
 type DataDict struct {
 	Vars []Var `xml:"dataDscr>var"` // variables included in the extract

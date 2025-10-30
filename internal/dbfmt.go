@@ -4,9 +4,12 @@ package internal
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
+// As of this initial version, the four following relational
+// database systems will be supported
 const (
 	POSTGRES string = "postgres"
 	ORACLE   string = "oracle"
@@ -14,6 +17,10 @@ const (
 	MSSQL    string = "mssql"
 )
 
+// getDataTypes returns a map of traditional types and their
+// database system-specific equivalents
+//
+// returns error if dbType is not one of the supported and recognized types
 func getDataTypes(dbType string) (map[string]string, error) {
 	types2DBtypes := map[string]string{
 		"int":    "INT",
@@ -25,7 +32,7 @@ func getDataTypes(dbType string) (map[string]string, error) {
 	case POSTGRES, MYSQL, MSSQL:
 		return types2DBtypes, nil
 	case ORACLE:
-		types2DBtypes["float"] = "number"
+		types2DBtypes["float"] = "NUMBER"
 		types2DBtypes["string"] = "varchar2(4000)"
 		return types2DBtypes, nil
 	default:
@@ -33,25 +40,35 @@ func getDataTypes(dbType string) (map[string]string, error) {
 	}
 }
 
-func MakeNewDBFormatter(dbType string) (*DataBaseFormatter, error) {
+// MakeNewDBFormatter returns a pointer to a DatabaseFormatter,
+// taking the database system as an input
+//
+// returns error if unrecognized/unsupported database system
+func MakeNewDBFormatter(dbType string) (*DatabaseFormatter, error) {
 	dataTypes, err := getDataTypes(dbType)
 	if err != nil {
 		return nil, err
 	}
 
-	return &DataBaseFormatter{DbType: dbType, DataTypes: dataTypes}, nil
+	return &DatabaseFormatter{DbType: dbType, DataTypes: dataTypes}, nil
 }
 
-type DataBaseFormatter struct {
+// DatabaseFormatter contains a relational database system identifier and
+// a corresponding map of traditional and database types
+type DatabaseFormatter struct {
 	DbType    string
 	DataTypes map[string]string
 }
 
-func (dbf *DataBaseFormatter) CreateMainTable(ddi *DataDict, tableName string) ([]byte, error) {
+// CreateMainTable generates a SQL "CREATE TABLE" statement, given a data dictionary and table name,
+// returning a byte slice of the creation statement (note: statement terminator (e.g., ";") is included)
+//
+// returns error if a variable's interval type is not in {"contin", "discrete"}
+func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict, tableName string) ([]byte, error) {
 	init_statement := fmt.Sprintf("CREATE TABLE %s (", tableName)
 	ddl_table := init_statement
 
-	for _, v := range ddi.Vars {
+	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType string
 		if v.DecimalPoint != 0 {
 			typeToUse = dbf.DataTypes["float"]
@@ -63,7 +80,13 @@ func (dbf *DataBaseFormatter) CreateMainTable(ddi *DataDict, tableName string) (
 				return nil, fmt.Errorf("unrecognized interval type %s for var %s", strings.ToLower(v.Name), v.Interval)
 			}
 		}
-		nameAndType = fmt.Sprintf("\n\t%v %v,\t-- %v", strings.ToLower(v.Name), typeToUse, v.Label)
+		var addComma string
+		if i == (len(ddi.Vars) - 1) {
+			addComma = ""
+		} else {
+			addComma = ","
+		}
+		nameAndType = fmt.Sprintf("\n\t%v %v%v\t-- %v", strings.ToLower(v.Name), typeToUse, addComma, v.Label)
 		ddl_table += nameAndType
 	}
 	ddl_table += "\n);\n"
@@ -71,10 +94,33 @@ func (dbf *DataBaseFormatter) CreateMainTable(ddi *DataDict, tableName string) (
 	return []byte(ddl_table), nil
 }
 
-func (dbf *DataBaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
+// CreateRefTables generates "CREATE TABLE" and "INSERT INTO ref_var" statements for the set of discrete variables in a data-dictionary, returning
+// a byte slice of all the statements (note: statement terminator (e.g., ";") is included).
+//
+// For example, the variable LABFORCE would generate the statements:
+//
+// CREATE TABLE ref_labforce (
+//
+//	val INT,
+//	label TEXT);
+//
+// );
+//
+// INSERT INTO ref_labforce (val, label)
+// VALUES
+//
+//	(0, 'N/A'),
+//	(1, 'No, not in the labor force'),
+//	(2, 'Yes, in the labor force'),
+//	(9, 'Unclassifiable (employment status unknown)');
+//
+// returns error if data dictionary contains zero discrete variables
+func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 	ddlStatement := ""
+	discreteVarCtr := 0 // return err if no discrete variables (e.g., no table statements)
 	for _, v := range ddi.Vars {
 		if v.Interval == "discrete" {
+			discreteVarCtr += 1
 			tableName := "ref_" + strings.ToLower(v.Name)
 			init_statement := fmt.Sprintf("CREATE TABLE %s (", tableName)
 			refTable := init_statement
@@ -84,15 +130,96 @@ func (dbf *DataBaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 			ddlStatement += refTable
 
 			insertStatement := fmt.Sprintf("INSERT INTO %v (val, label)\nVALUES", tableName)
-			for _, cat := range v.Cats {
-				valAndLab := fmt.Sprintf("\n\t(%v, '%v')", cat.Val, cat.Label)
+			for i, cat := range v.Cats {
+				var addComma string
+				if i == (len(v.Cats) - 1) {
+					addComma = "\n"
+				} else {
+					addComma = ","
+				}
+				escapedLabel := strings.ReplaceAll(cat.Label, "'", "''")
+				valAndLab := fmt.Sprintf("\n\t(%v, '%v')%v", cat.Val, escapedLabel, addComma)
 				insertStatement += valAndLab
 			}
 			insertStatement += ";\n\n"
 			ddlStatement += insertStatement
 		}
 	}
+	if discreteVarCtr == 0 {
+		return nil, fmt.Errorf("zero discrete variables included")
+	}
 	return []byte(ddlStatement), nil
 }
 
-// func (dbf *DataBaseFormatter) InsertStatement() ([]byte, error) {}
+// BulkInsert generates a bulk insert statement for a slice of rows.
+//
+// returns error if any one row contains a parsing error.
+func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, rows [][]byte, tabName string) ([]byte, error) {
+	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", tabName)
+	dat := make([]byte, 0)
+	for _, row := range rows {
+		inserts, err := dbf.insertTuple(ddi, row)
+		// come back to this;
+		// if a single row is an issue for some reason, maybe skip?
+		if err != nil {
+			return nil, err
+		}
+		dat = append(dat, inserts...)
+
+	}
+	bulkInsertStatement := append([]byte(bulkInsertInit), dat...)
+	bulkInsertStatement[len(bulkInsertStatement)-2] = ';'
+	return bulkInsertStatement, nil
+}
+
+// insertTuple generates a single insertion tuple, given a row byte slice and a data dictionary.
+// Note that this statement does not include the insertion statement itself, as the BulkInsert method
+// will be used to create insertion statements.
+//
+// returns error if start and end positions are not valid for row.
+func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, error) {
+	insertStatement := "\t("
+	for i, v := range ddi.Vars {
+		start, end := v.Location.Start-1, v.Location.End
+		if (start < 0) || (end > len(row)) {
+			return nil, fmt.Errorf("startAt %v & endAt %v not valid index range for sliceLen %v", start, end, len(row))
+		}
+		chars := row[start:end]
+		if v.DecimalPoint != 0 {
+			placeDecimalAt := len(chars) - v.DecimalPoint
+			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
+		}
+		if i != (len(ddi.Vars) - 1) {
+			insertStatement += string(chars) + ","
+		} else {
+			insertStatement += string(chars)
+		}
+	}
+	insertStatement += "),\n"
+	return []byte(insertStatement), nil
+}
+
+// CreateIndices generates "CREATE INDEX idx_var" statements for a set of columns. As of now, does not
+// support multi-column index creations.
+//
+// returns error if a column is not recognized in the data dictionary
+func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string, tableName string) ([]byte, error) {
+	indexStatements := ""
+	varNames := dbf.VariableNames(ddi)
+	for _, col := range cols {
+		if !slices.Contains(varNames, col) {
+			return nil, fmt.Errorf("cannot create idx on unrecognized variable %v", col)
+		}
+		indexStatements += fmt.Sprintf("CREATE INDEX idx_%v ON %v (%v);\n", col, tableName, col)
+	}
+	return []byte(indexStatements), nil
+}
+
+// VariableNames returns the included variables from a data dictionary
+func (dbf *DatabaseFormatter) VariableNames(ddi *DataDict) []string {
+	variableNames := make([]string, len(ddi.Vars))
+	for i, v := range ddi.Vars {
+		variableNames[i] = v.Name
+	}
+	return variableNames
+}

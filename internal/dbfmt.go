@@ -36,7 +36,7 @@ func getDataTypes(dbType string) (map[string]string, error) {
 		types2DBtypes["string"] = "varchar2(4000)"
 		return types2DBtypes, nil
 	default:
-		return nil, fmt.Errorf("unrecognized database type %s not in {'postgres', 'oracle', 'mysql', 'postgres'}", dbType)
+		return nil, fmt.Errorf("unrecognized database type %s not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
 	}
 }
 
@@ -47,7 +47,7 @@ func getDataTypes(dbType string) (map[string]string, error) {
 func MakeNewDBFormatter(dbType string) (*DatabaseFormatter, error) {
 	dataTypes, err := getDataTypes(dbType)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not get data types: %w", err)
 	}
 
 	return &DatabaseFormatter{DbType: dbType, DataTypes: dataTypes}, nil
@@ -160,9 +160,10 @@ func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, rows [][]byte, tabName s
 	for _, row := range rows {
 		inserts, err := dbf.insertTuple(ddi, row)
 		// come back to this;
+		// currently, returning error for entire bulk insert, if just one row errs
 		// if a single row is an issue for some reason, maybe skip?
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error row %v: %w", row, err)
 		}
 		dat = append(dat, inserts...)
 

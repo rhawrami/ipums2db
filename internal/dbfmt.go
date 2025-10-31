@@ -4,6 +4,7 @@ package internal
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 )
@@ -40,11 +41,11 @@ func getDataTypes(dbType string) (map[string]string, error) {
 	}
 }
 
-// MakeNewDBFormatter returns a pointer to a DatabaseFormatter,
+// NewDBFormatter returns a pointer to a DatabaseFormatter,
 // taking the database system as an input
 //
 // returns error if unrecognized/unsupported database system
-func MakeNewDBFormatter(dbType string) (*DatabaseFormatter, error) {
+func NewDBFormatter(dbType string) (*DatabaseFormatter, error) {
 	dataTypes, err := getDataTypes(dbType)
 	if err != nil {
 		return nil, fmt.Errorf("could not get data types: %w", err)
@@ -149,6 +150,38 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 		return nil, fmt.Errorf("zero discrete variables included")
 	}
 	return []byte(ddlStatement), nil
+}
+
+func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, startAtRow int, numRows int, tabName string) ([]byte, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	bytesPerLine, err := BytesPerRow(ddi)
+	if err != nil {
+		return nil, err
+	}
+
+	off := bytesPerLine * startAtRow
+	buffSize := numRows * bytesPerLine
+	buffer := make([]byte, buffSize)
+	_, _ = file.ReadAt(buffer, int64(off))
+
+	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", tabName)
+	dat := make([]byte, 0, len(buffer))
+	for i := 0; i < len(buffer); i += bytesPerLine {
+		row := buffer[i:(i + bytesPerLine)]
+		inserts, err := dbf.insertTuple(ddi, row)
+		if err != nil {
+			return nil, fmt.Errorf("error row %v: %w", row, err)
+		}
+		dat = append(dat, inserts...)
+	}
+	bulkInsertStatement := append([]byte(bulkInsertInit), dat...)
+	bulkInsertStatement[len(bulkInsertStatement)-2] = ';'
+	return bulkInsertStatement, nil
 }
 
 // BulkInsert generates a bulk insert statement for a slice of rows.

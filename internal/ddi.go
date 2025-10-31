@@ -2,16 +2,43 @@
 // from data-dictionary parsing to SQL statement creation
 package internal
 
-import "fmt"
+import (
+	"encoding/xml"
+	"fmt"
+	"os"
+)
 
-// LineWidth calculates the line width (# chars + newline)
+func NewDataDict(ddiFileName string) (DataDict, error) {
+	file, err := os.Open(ddiFileName)
+	if err != nil {
+		return DataDict{}, err
+	}
+	defer file.Close()
+	var ddi DataDict
+
+	decoder := xml.NewDecoder(file)
+	err = decoder.Decode(&ddi)
+
+	if err != nil {
+		return DataDict{}, err
+	}
+
+	return ddi, nil
+}
+
+// BytesPerRow calculates the line width (# chars + newline)
 // for an IPUMS extract, using the data dictionary
-func LineWidth(dd *DataDict) (int, error) {
+func BytesPerRow(dd *DataDict) (int, error) {
 	if len(dd.Vars) == 0 {
 		return 0, fmt.Errorf("no variables found, unable to calculate line width")
 	}
-	lw := dd.Vars[len(dd.Vars)-1].Location.End + 1 // add newline
-	return lw, nil
+	maxEndPos := 0
+	for _, v := range dd.Vars {
+		if v.Location.End > maxEndPos {
+			maxEndPos = v.Location.End
+		}
+	}
+	return maxEndPos + 1, nil // add newline character
 }
 
 // DataDict represents an IPUMS xml-decoded data dictionary

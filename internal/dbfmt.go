@@ -18,6 +18,8 @@ const (
 	MSSQL    string = "mssql"
 )
 
+const maxPlacesFori32 int = 10
+
 // getDataTypes returns a map of traditional types and their
 // database system-specific equivalents
 //
@@ -26,38 +28,44 @@ func getDataTypes(dbType string) (map[string]string, error) {
 	types2DBtypes := map[string]string{
 		"int":    "INT",
 		"float":  "NUMERIC",
-		"string": "TEXT",
+		"string": "VARCHAR",
 	}
 
 	switch strings.ToLower(dbType) {
-	case POSTGRES, MYSQL, MSSQL:
-		return types2DBtypes, nil
+	case POSTGRES, MSSQL:
+	case MYSQL:
+		types2DBtypes["float"] = "DECIMAL"
 	case ORACLE:
 		types2DBtypes["float"] = "NUMBER"
-		types2DBtypes["string"] = "varchar2(4000)"
-		return types2DBtypes, nil
+		types2DBtypes["string"] = "VARCHAR2"
 	default:
 		return nil, fmt.Errorf("unrecognized database type %s not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
 	}
+
+	return types2DBtypes, nil
 }
 
 // NewDBFormatter returns a pointer to a DatabaseFormatter,
-// taking the database system as an input
+// taking the database system, and main table name, as inputs
 //
 // returns error if unrecognized/unsupported database system
-func NewDBFormatter(dbType string) (*DatabaseFormatter, error) {
+func NewDBFormatter(dbType, tableName string) (*DatabaseFormatter, error) {
+	if len(tableName) == 0 {
+		return nil, fmt.Errorf("tableName can not be empty")
+	}
 	dataTypes, err := getDataTypes(dbType)
 	if err != nil {
 		return nil, fmt.Errorf("could not get data types: %w", err)
 	}
 
-	return &DatabaseFormatter{DbType: dbType, DataTypes: dataTypes}, nil
+	return &DatabaseFormatter{DbType: dbType, TableName: tableName, DataTypes: dataTypes}, nil
 }
 
 // DatabaseFormatter contains a relational database system identifier and
 // a corresponding map of traditional and database types
 type DatabaseFormatter struct {
 	DbType    string
+	TableName string
 	DataTypes map[string]string
 }
 
@@ -65,18 +73,29 @@ type DatabaseFormatter struct {
 // returning a byte slice of the creation statement (note: statement terminator (e.g., ";") is included)
 //
 // returns error if a variable's interval type is not in {"contin", "discrete"}
-func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict, tableName string) ([]byte, error) {
-	init_statement := fmt.Sprintf("CREATE TABLE %s (", tableName)
+func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
+	init_statement := fmt.Sprintf("CREATE TABLE %s (", dbf.TableName)
 	ddl_table := init_statement
 
 	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType string
+		// if a var has decimal places, make it float
 		if v.DecimalPoint != 0 {
-			typeToUse = dbf.DataTypes["float"]
+			// make numeric type with precision := width; scale := decimalpoint
+			typeToUse = fmt.Sprintf("%v(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint)
 		} else {
 			switch v.Interval {
 			case "contin", "discrete":
-				typeToUse = dbf.DataTypes["int"]
+				// the INT type in these database systems defaults to 32 bits
+				// since there's no negative value in these extracts, you can represent
+				// integers from 0 to 2^32 - 1 (which has ten places)
+				// if for some reason, a column has more than 10 characters,
+				// make it a string type
+				if v.Location.Width > maxPlacesFori32 {
+					typeToUse = fmt.Sprintf("%v(%d)", dbf.DataTypes["string"], v.Location.Width) // make varchar(N) for var with max N chars
+				} else {
+					typeToUse = dbf.DataTypes["int"] // the rest of vars are ints
+				}
 			default:
 				return nil, fmt.Errorf("unrecognized interval type %s for var %s", strings.ToLower(v.Name), v.Interval)
 			}
@@ -90,7 +109,7 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict, tableName string) (
 		nameAndType = fmt.Sprintf("\n\t%v %v%v\t-- %v", strings.ToLower(v.Name), typeToUse, addComma, v.Label)
 		ddl_table += nameAndType
 	}
-	ddl_table += "\n);\n"
+	ddl_table += "\n);\n\n"
 
 	return []byte(ddl_table), nil
 }
@@ -152,7 +171,7 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 	return []byte(ddlStatement), nil
 }
 
-func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, startAtRow int, numRows int, tabName string) ([]byte, error) {
+func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, startAtRow int, numRows int) ([]byte, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
@@ -169,7 +188,7 @@ func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, sta
 	buffer := make([]byte, buffSize)
 	_, _ = file.ReadAt(buffer, int64(off))
 
-	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", tabName)
+	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", dbf.TableName)
 	dat := make([]byte, 0, len(buffer))
 	for i := 0; i < len(buffer); i += bytesPerLine {
 		row := buffer[i:(i + bytesPerLine)]
@@ -187,8 +206,8 @@ func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, sta
 // BulkInsert generates a bulk insert statement for a slice of rows.
 //
 // returns error if any one row contains a parsing error.
-func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, rows [][]byte, tabName string) ([]byte, error) {
-	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", tabName)
+func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, rows [][]byte) ([]byte, error) {
+	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", dbf.TableName)
 	dat := make([]byte, 0)
 	for _, row := range rows {
 		inserts, err := dbf.insertTuple(ddi, row)
@@ -218,15 +237,26 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 		if (start < 0) || (end > len(row)) {
 			return nil, fmt.Errorf("startAt %v & endAt %v not valid index range for sliceLen %v", start, end, len(row))
 		}
+
 		chars := row[start:end]
+		var sChars string
+		// handle decimal places
 		if v.DecimalPoint != 0 {
 			placeDecimalAt := len(chars) - v.DecimalPoint
 			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
-		}
-		if i != (len(ddi.Vars) - 1) {
-			insertStatement += string(chars) + ","
+			sChars = string(chars)
 		} else {
-			insertStatement += string(chars)
+			if v.Location.Width > maxPlacesFori32 {
+				sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
+			} else {
+				sChars = string(chars) // int types
+			}
+		}
+
+		if i != (len(ddi.Vars) - 1) {
+			insertStatement += sChars + ","
+		} else {
+			insertStatement += sChars
 		}
 	}
 	insertStatement += "),\n"
@@ -237,14 +267,14 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 // support multi-column index creations.
 //
 // returns error if a column is not recognized in the data dictionary
-func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string, tableName string) ([]byte, error) {
+func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string) ([]byte, error) {
 	indexStatements := ""
 	varNames := dbf.VariableNames(ddi)
 	for _, col := range cols {
 		if !slices.Contains(varNames, col) {
 			return nil, fmt.Errorf("cannot create idx on unrecognized variable %v", col)
 		}
-		indexStatements += fmt.Sprintf("CREATE INDEX idx_%v ON %v (%v);\n", col, tableName, col)
+		indexStatements += fmt.Sprintf("CREATE INDEX idx_%v ON %v (%v);\n", col, dbf.TableName, col)
 	}
 	return []byte(indexStatements), nil
 }

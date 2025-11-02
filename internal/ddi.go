@@ -4,10 +4,10 @@ package internal
 
 import (
 	"encoding/xml"
-	"fmt"
 	"os"
 )
 
+// NewDataDict returns a DataDict, given the file path to the XML file
 func NewDataDict(ddiFileName string) (DataDict, error) {
 	file, err := os.Open(ddiFileName)
 	if err != nil {
@@ -28,17 +28,17 @@ func NewDataDict(ddiFileName string) (DataDict, error) {
 
 // BytesPerRow calculates the line width (# chars + newline)
 // for an IPUMS extract, using the data dictionary
-func BytesPerRow(dd *DataDict) (int, error) {
-	if len(dd.Vars) == 0 {
-		return 0, fmt.Errorf("no variables found, unable to calculate line width")
-	}
+func BytesPerRow(dd *DataDict) int {
+	// if len(dd.Vars) == 0 {
+	// 	return 0, fmt.Errorf("no variables found, unable to calculate line width")
+	// }
 	maxEndPos := 0
 	for _, v := range dd.Vars {
 		if v.Location.End > maxEndPos {
 			maxEndPos = v.Location.End
 		}
 	}
-	return maxEndPos + 1, nil // add newline character
+	return maxEndPos + 1 // , nil // add newline character
 }
 
 // DataDict represents an IPUMS xml-decoded data dictionary

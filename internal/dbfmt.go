@@ -3,7 +3,9 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -18,6 +20,9 @@ const (
 	MSSQL    string = "mssql"
 )
 
+// the maximum value for a 32 bit signed int is (2 ** 31 - 1)
+// or 2147483647. This value has ten places. So we need to limit
+// INT columns to those with widths <= 10.
 const maxPlacesFori32 int = 10
 
 // getDataTypes returns a map of traditional types and their
@@ -171,22 +176,49 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 	return []byte(ddlStatement), nil
 }
 
-func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, startAtRow int, numRows int) ([]byte, error) {
-	file, err := os.Open(fileName)
-	if err != nil {
-		return nil, err
+// CreateIndices generates "CREATE INDEX idx_var" statements for a set of columns. As of now, does not
+// support multi-column index creations.
+//
+// returns error if a column is not recognized in the data dictionary
+func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string) ([]byte, error) {
+	indexStatements := ""
+	varNames := dbf.VariableNames(ddi)
+	for _, col := range cols {
+		if !slices.Contains(varNames, strings.ToLower(col)) {
+			return nil, fmt.Errorf("cannot create idx on unrecognized variable %v", col)
+		}
+		indexStatements += fmt.Sprintf("CREATE INDEX idx_%v ON %v (%v);\n", col, dbf.TableName, col)
 	}
-	defer file.Close()
+	return []byte(indexStatements), nil
+}
 
-	bytesPerLine, err := BytesPerRow(ddi)
-	if err != nil {
-		return nil, err
+// VariableNames returns the included variables from a data dictionary
+func (dbf *DatabaseFormatter) VariableNames(ddi *DataDict) []string {
+	variableNames := make([]string, len(ddi.Vars))
+	for i, v := range ddi.Vars {
+		variableNames[i] = strings.ToLower(v.Name)
 	}
+	return variableNames
+}
+
+// BulkInsert generates mulit-tuple database table inserts.
+//
+// It takes in a DataDict pointer, the fixed width file, the row
+// in the file to start reading at, and the number of rows to parse in total.
+//
+// Returns error file can't be opened, or if any row cannot be parsed.
+func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, datFile *os.File, startAtRow int, numRows int) ([]byte, error) {
+	bytesPerLine := BytesPerRow(ddi)
 
 	off := bytesPerLine * startAtRow
 	buffSize := numRows * bytesPerLine
 	buffer := make([]byte, buffSize)
-	_, _ = file.ReadAt(buffer, int64(off))
+	_, err := datFile.ReadAt(buffer, int64(off))
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("error reading dat file: %v", err)
+		}
+	}
 
 	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", dbf.TableName)
 	dat := make([]byte, 0, len(buffer))
@@ -197,28 +229,6 @@ func (dbf *DatabaseFormatter) ByteBulkInsert(ddi *DataDict, fileName string, sta
 			return nil, fmt.Errorf("error row %v: %w", row, err)
 		}
 		dat = append(dat, inserts...)
-	}
-	bulkInsertStatement := append([]byte(bulkInsertInit), dat...)
-	bulkInsertStatement[len(bulkInsertStatement)-2] = ';'
-	return bulkInsertStatement, nil
-}
-
-// BulkInsert generates a bulk insert statement for a slice of rows.
-//
-// returns error if any one row contains a parsing error.
-func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, rows [][]byte) ([]byte, error) {
-	bulkInsertInit := fmt.Sprintf("INSERT INTO %v VALUES\n", dbf.TableName)
-	dat := make([]byte, 0)
-	for _, row := range rows {
-		inserts, err := dbf.insertTuple(ddi, row)
-		// come back to this;
-		// currently, returning error for entire bulk insert, if just one row errs
-		// if a single row is an issue for some reason, maybe skip?
-		if err != nil {
-			return nil, fmt.Errorf("error row %v: %w", row, err)
-		}
-		dat = append(dat, inserts...)
-
 	}
 	bulkInsertStatement := append([]byte(bulkInsertInit), dat...)
 	bulkInsertStatement[len(bulkInsertStatement)-2] = ';'
@@ -261,29 +271,4 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 	}
 	insertStatement += "),\n"
 	return []byte(insertStatement), nil
-}
-
-// CreateIndices generates "CREATE INDEX idx_var" statements for a set of columns. As of now, does not
-// support multi-column index creations.
-//
-// returns error if a column is not recognized in the data dictionary
-func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string) ([]byte, error) {
-	indexStatements := ""
-	varNames := dbf.VariableNames(ddi)
-	for _, col := range cols {
-		if !slices.Contains(varNames, col) {
-			return nil, fmt.Errorf("cannot create idx on unrecognized variable %v", col)
-		}
-		indexStatements += fmt.Sprintf("CREATE INDEX idx_%v ON %v (%v);\n", col, dbf.TableName, col)
-	}
-	return []byte(indexStatements), nil
-}
-
-// VariableNames returns the included variables from a data dictionary
-func (dbf *DatabaseFormatter) VariableNames(ddi *DataDict) []string {
-	variableNames := make([]string, len(ddi.Vars))
-	for i, v := range ddi.Vars {
-		variableNames[i] = v.Name
-	}
-	return variableNames
 }

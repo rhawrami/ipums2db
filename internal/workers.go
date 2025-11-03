@@ -31,7 +31,6 @@ func ParseBlock(dbfmtr DatabaseFormatter, ddi *DataDict, cfg ParserConfig) {
 		return
 	}
 	defer datFile.Close()
-
 	for job := range cfg.JobStream {
 		parsedBlock, err := dbfmtr.BulkInsert(ddi, datFile, job.StartAtRow, job.RowsToRead)
 		cfg.ParsedStream <- ParsedResult{Block: parsedBlock, AnyError: err}

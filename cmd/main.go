@@ -118,12 +118,12 @@ func main() {
 	}
 	numParsers := 5
 	parseWG.Add(numParsers)
-	go func() {
-		for i := 0; i < numParsers; i++ {
+	for i := 0; i < numParsers; i++ {
+		go func() {
 			defer parseWG.Done()
 			i2db.ParseBlock(*dbfmtr, &ddi, pConfig)
-		}
-	}()
+		}()
+	}
 
 	// close parsed stream
 	go func() {

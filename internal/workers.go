@@ -1,3 +1,5 @@
+// Package internal provides all functionality for ipums2db
+// from data-dictionary parsing to SQL statement creation
 package internal
 
 import (
@@ -18,10 +20,7 @@ func WriteToDumpFile(outFile *os.File, parsedStream chan ParsedResult) error {
 		_, err := outFile.Write(res.Block)
 		if err != nil {
 			outFile.Close()
-			errRM := os.Remove(outFile.Name())
-			if errRM != nil {
-				return fmt.Errorf("encountered error deleting corrupted file: %v", errRM)
-			}
+			_ = os.Remove(outFile.Name())
 			return fmt.Errorf("encountered error writing: %v; deleting in-progress dump file", err)
 		}
 	}

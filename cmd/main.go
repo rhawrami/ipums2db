@@ -45,7 +45,7 @@ func main() {
 	// print job summary
 	棕熊.PrintJobSummary(silentProg, "=", dbType, tabName, indices, ddiPath, datFileName)
 	// print loading message
-	棕熊.PrintLoadingMessage(silentProg)
+	go 棕熊.PrintLoadingMessage(silentProg)
 
 	// new DataDict and DatabaseFormatter
 	ddi, dbfmtr, err := 棕熊.NewDataDictAndDatabaseFormatter(dbType, tabName, ddiPath)

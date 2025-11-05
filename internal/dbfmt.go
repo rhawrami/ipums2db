@@ -259,6 +259,11 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 			if v.Location.Width > maxPlacesFori32 {
 				sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
 			} else {
+				// some dat files contain empty spaces unfortunately
+				// in these cases, we have to convert to null
+				if slices.Contains(chars, byte(' ')) {
+					chars = []byte("null")
+				}
 				sChars = string(chars) // int types
 			}
 		}

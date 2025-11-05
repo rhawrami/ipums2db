@@ -37,7 +37,7 @@ func NewJobConfig(totBytes int, nWriters int) JobConfig {
 	// processed in each parse job should be 100 // (nParsers + nWriters),
 	// as both the  parsers and writers could both be processing/recieving
 	// at the same moment.
-	bytesIn1MiB := 2 << 19
+	bytesIn1MiB := 1 << 20
 	MiB100 := bytesIn1MiB * 100
 	maxBPerJ := MiB100 / (nParsers + nWriters)
 
@@ -109,7 +109,7 @@ func WriteDDL(dumpFile *os.File, dbfmtr *DatabaseFormatter, ddi *DataDict, indic
 	}
 
 	lenDDL := len(tableSQL) + len(refTablesSQL) + len(indicesSQL)
-	buffer := make([]byte, lenDDL)
+	buffer := make([]byte, 0, lenDDL)
 	// append DDL
 	buffer = append(buffer, tableSQL...)
 	buffer = append(buffer, refTablesSQL...)

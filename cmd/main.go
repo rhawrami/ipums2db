@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -42,28 +41,28 @@ func main() {
 
 	start := time.Now()
 
+	// make outFile
+	dumpFile, err := 棕熊.CreateDumpFile(outFile)
+	checkErr(err, "ipums2db: dumpFile", outFile)
+
+	// new DataDict and DatabaseFormatter
+	ddi, dbfmtr, err := 棕熊.NewDataDictAndDatabaseFormatter(dbType, tabName, ddiPath)
+	checkErr(err, "ipums2db: DataDict/DBFormatter", outFile)
+
+	// get dat file and total bytes in file
+	totBytes, err := 棕熊.TotalBytes(datFileName)
+	checkErr(err, "ipums2db: .dat file", outFile)
+	// get total bytes
+	bytesPerRow := 棕熊.BytesPerRow(&ddi)
+
+	// write main table creation, reference tables creation/insert, indices
+	err = 棕熊.WriteDDL(dumpFile, dbfmtr, &ddi, idx)
+	checkErr(err, "ipums2db: DDL", outFile)
+
 	// print job summary
 	棕熊.PrintJobSummary(silentProg, "=", dbType, tabName, indices, ddiPath, datFileName)
 	// print loading message
 	go 棕熊.PrintLoadingMessage(silentProg)
-
-	// new DataDict and DatabaseFormatter
-	ddi, dbfmtr, err := 棕熊.NewDataDictAndDatabaseFormatter(dbType, tabName, ddiPath)
-	checkErr(err, "ipums2db: DataDict/DBFormatter")
-
-	// get dat file and total bytes in file
-	totBytes, err := 棕熊.TotalBytes(datFileName)
-	checkErr(err, "ipums2db: .dat file")
-	// get total bytes
-	bytesPerRow := 棕熊.BytesPerRow(&ddi)
-
-	// make outFile
-	dumpFile, err := 棕熊.CreateDumpFile(outFile)
-	checkErr(err, "ipums2db: dumpFile")
-
-	// write main table creation, reference tables creation/insert, indices
-	err = 棕熊.WriteDDL(dumpFile, dbfmtr, &ddi, idx)
-	checkErr(err, "ipums2db: DDL")
 
 	// goroutines
 	// nWriters
@@ -118,7 +117,7 @@ func main() {
 		go func() {
 			defer writeWG.Done()
 			err := 棕熊.WriteToDumpFile(dumpFile, parsedBlockStream)
-			checkErr(err, "ipums2db: writer")
+			checkErr(err, "ipums2db: writer", outFile)
 		}()
 	}
 
@@ -133,9 +132,12 @@ func main() {
 
 // Helper Functions
 // checkErr checks if err != nil; prints error and exits if so
-func checkErr(err error, topic string) {
+// also deletes the outFile
+func checkErr(err error, topic string, outFileToRM string) {
 	if err != nil {
-		log.Fatalf("%v: %v\n", topic, err)
+		fmt.Fprintf(os.Stderr, "%v: %v\n", topic, err)
+		_ = os.Remove(outFileToRM) // if this fails, there's not much we can do
+		os.Exit(1)
 	}
 }
 

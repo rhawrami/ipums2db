@@ -12,20 +12,22 @@ import (
 )
 
 func main() {
-	// flags
+	// flags ----------------------------------------
 	var (
 		dbType     string
 		ddiPath    string
 		tabName    string
 		indices    string
 		outFile    string
+		makeItDir  bool
 		silentProg bool
 	)
-	flag.StringVar(&dbType, "db", "postgres", "database type; ex. -db postgres")
+	flag.StringVar(&dbType, "db", "postgres", "database type; ex. -d postgres")
 	flag.StringVar(&ddiPath, "x", "", "XML path; ex. -x cps_001.xml")
 	flag.StringVar(&tabName, "t", "ipums_tab", "main table name; ex. -t cps_respondents")
 	flag.StringVar(&indices, "i", "", "indices to create (comma delimit for >1 idx); ex. -i age; ex. -i age,sex")
 	flag.StringVar(&outFile, "o", "ipums_dump.sql", "output file name; ex. -o cps_dump.sql")
+	flag.BoolVar(&makeItDir, "d", false, "make directory output format")
 	flag.BoolVar(&silentProg, "s", false, "silent output; ex. -s")
 	// parse flags
 	flag.Parse()
@@ -39,104 +41,92 @@ func main() {
 	checkOneArg(cmdArgs)
 	datFileName := cmdArgs[0]
 
-	start := time.Now()
+	start := time.Now() // start time here; prior to file creations
 
-	// make outFile
-	dumpFile, err := 棕熊.CreateDumpFile(outFile)
-	checkErr(err, "ipums2db: dumpFile", outFile)
-
-	// new DataDict and DatabaseFormatter
-	ddi, dbfmtr, err := 棕熊.NewDataDictAndDatabaseFormatter(dbType, tabName, ddiPath)
-	checkErr(err, "ipums2db: DataDict/DBFormatter", outFile)
-
-	// get dat file and total bytes in file
+	// setup ----------------------------------------
+	// get totalBytes in the datFile
 	totBytes, err := 棕熊.TotalBytes(datFileName)
-	checkErr(err, "ipums2db: .dat file", outFile)
-	// get total bytes
-	bytesPerRow := 棕熊.BytesPerRow(&ddi)
+	checkErr(err, "totBytes")
 
-	// write main table creation, reference tables creation/insert, indices
-	err = 棕熊.WriteDDL(dumpFile, dbfmtr, &ddi, idx)
-	checkErr(err, "ipums2db: DDL", outFile)
+	// gen new DatabaseFormatter
+	dbfmtr, err := 棕熊.NewDBFormatter(dbType, tabName)
+	checkErr(err, "DBFormatter")
 
-	// print job summary
+	// gen new DataDict
+	ddi, err := 棕熊.NewDataDict(ddiPath)
+	checkErr(err, "DataDict")
+
+	// gen new DumpWriter
+	dw, err := 棕熊.NewDumpWriter(totBytes, outFile, makeItDir)
+	checkErr(err, "DumpWriter")
+
+	// gen new JobConfig
+	// MaxBytesPerJob: the max byte size that a single parser (writer) will parse (write)
+	// NumParsers: number of concurrent parsers
+	// ParsedResChanSize: size of buffered ParsedResult channel
+	nWriters := len(dw.OutFiles)
+	jCFG := 棕熊.NewJobConfig(totBytes, nWriters)
+	maxBperJob, nParsers, nBuffRes := jCFG.MaxBytesPerJob, jCFG.NumParsers, jCFG.ParsedResChanSize
+
+	// bytes per row in datFile
+	bPerR := 棕熊.BytesPerRow(&ddi)
+
+	// gen new DatParser
+	dp := 棕熊.NewDatParser(datFileName, nParsers, &ddi, dbfmtr)
+
+	// job submission summary ----------------------------------------
 	棕熊.PrintJobSummary(silentProg, "=", dbType, tabName, indices, ddiPath, datFileName)
 	// print loading message
 	go 棕熊.PrintLoadingMessage(silentProg)
 
-	// goroutines
-	// nWriters
-	nWriters := 1 // come back to this
-	// job config
-	jobConfig := 棕熊.NewJobConfig(totBytes, nWriters)
-	// parsing config
-	maxBPerJob := jobConfig.MaxBytesPerJob
-	parsedBlocksChanSize := jobConfig.ParsedResChanSize
-	nParsers := jobConfig.NumParsers
+	// write ddl
+	// note: this includes table and index creations, as well as ref_table[s] creation and inserts
+	err = dw.WriteDDL(dbfmtr, &ddi, idx)
+	checkErr(err, "write DDL")
 
-	// chans
+	// channels and waitgroups ----------------------------------------
+	// jobStream: channel of ParsingJobs that will be consumed by DatParser[s]
+	// parsedBlockStream: buffered channel of ParsedResults that will be consumed by DumpWriter[s]
 	jobStream := make(chan 棕熊.ParsingJob)
-	parsedBlockStream := make(chan 棕熊.ParsedResult, parsedBlocksChanSize)
-	// waitgroups
-	var makeJobWG, parseWG, writeWG sync.WaitGroup
+	parsedBlockStream := make(chan 棕熊.ParsedResult, nBuffRes)
+	// gen waitgroups; one for each of the three steps
+	var jobMakerWG, parserWG, writerWG sync.WaitGroup
 
-	// spawn JobMaker
-	makeJobWG.Add(1)
+	// goroutines ----------------------------------------
+	// spawn a single JobMaker
+	jobMakerWG.Add(1)
 	go func() {
-		defer makeJobWG.Done()
-		err := 棕熊.MakeParsingJobsStream(bytesPerRow, int(totBytes), maxBPerJob, jobStream)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ipums2db: parsing: %v\n", err)
-			os.Exit(1)
-		}
+		defer jobMakerWG.Done()
+		err := 棕熊.MakeParsingJobsStream(bPerR, int(totBytes), maxBperJob, jobStream)
+		checkErr(err, "parsing")
 	}()
 
-	// spawn Parsers
-	pConfig := 棕熊.ParserConfig{
-		DatFileName:  datFileName,
-		JobStream:    jobStream,
-		ParsedStream: parsedBlockStream,
-	}
-	parseWG.Add(nParsers)
-	for i := 0; i < nParsers; i++ {
-		go func() {
-			defer parseWG.Done()
-			棕熊.ParseBlock(*dbfmtr, &ddi, pConfig)
-		}()
-	}
-
-	// close parsed stream
+	// spawn parser[s]
+	dp.ParseBlocks(&parserWG, jobStream, parsedBlockStream)
+	// close parsedBlockStream when parsers are done consuming from jobStream
 	go func() {
-		parseWG.Wait()
+		parserWG.Wait()
 		close(parsedBlockStream)
 	}()
 
-	// spawn Writer
-	writeWG.Add(nWriters)
-	for i := 0; i < nWriters; i++ {
-		go func() {
-			defer writeWG.Done()
-			err := 棕熊.WriteToDumpFile(dumpFile, parsedBlockStream)
-			checkErr(err, "ipums2db: writer", outFile)
-		}()
-	}
+	// spawn writer[s]
+	dw.WriteParsedResults(&writerWG, parsedBlockStream)
 
-	// wait on each of the three steps
-	parseWG.Wait()
-	makeJobWG.Wait()
-	writeWG.Wait()
+	// wait on groups
+	jobMakerWG.Wait()
+	parserWG.Wait()
+	writerWG.Wait()
 
+	// end summary ----------------------------------------
 	end := time.Now()
 	棕熊.PrintFinalSummary(silentProg, start, end, int(totBytes), outFile)
 }
 
 // Helper Functions
 // checkErr checks if err != nil; prints error and exits if so
-// also deletes the outFile
-func checkErr(err error, topic string, outFileToRM string) {
+func checkErr(err error, topic string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v: %v\n", topic, err)
-		_ = os.Remove(outFileToRM) // if this fails, there's not much we can do
 		os.Exit(1)
 	}
 }

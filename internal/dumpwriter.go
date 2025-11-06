@@ -6,10 +6,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
+// maxBytesPerFile determines the maximum bytes (pre-processed fixed-width, not SQL statements)
+// that an outFile can hold. As seen below, the current max size is 10 GiB; after testing both
+// processing time and database insertion time (on the number of supported database systems), this
+// value will likely be revisited.
+const maxBytesPerFile = (1 << 30) * 10
+
+// NewDumpWriter generates a new DumpWriter. It generates the number of outFiles needed, and
+// the schema file. If makeItDir is true, then a directory is first created, and all files are placed
+// in that directory. If makeItDir is fale, only one outFile will be created, and the outFile will necessarily
+// be the same file as the schema file. Performs directory and file cleanup in case of errors in the process of
+// creating outFiles.
 func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter, error) {
+	// if either the default option is used, or makeItDir == false AND -o is provided:
+	// need to trim the ".sql" for the rest of the function logic to work
+	// note: this doesn't protect agains non-".sql" extensions.
+	writerName = strings.TrimSuffix(writerName, ".sql")
 	// calc num outfiles
 	nOutFiles := 1
 	if makeItDir {
@@ -40,7 +56,7 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 	}
 	// make outFiles
 	// note that if there's only one outfile, then the schemaFile and
-	// the OutFile will point to the same underlying file.
+	// the outFile will point to the same underlying file.
 	outFiles := make([]*os.File, nOutFiles)
 	for i := 0; i < nOutFiles; i++ {
 		fName := fmt.Sprintf("%s.sql", writerName)
@@ -58,6 +74,10 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 					return DumpWriter{}, errRM // if this happens, you're out of luck pal
 				}
 			}
+			// remove directory created
+			if makeItDir {
+				_ = os.Remove(writerName)
+			}
 			return DumpWriter{}, err
 		}
 		outFiles[i] = f
@@ -67,6 +87,9 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 	return dw, nil
 }
 
+// WriteParsedResults spawns N := len(DumpWriter.OutFiles) outFile writers to write SQL insertion
+// statements to outFiles. It reads from a channel of ParsedResults, and writes successful results
+// to an outFile.
 func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan ParsedResult) error {
 	wg.Add(len(dw.OutFiles))
 	for _, f := range dw.OutFiles {
@@ -78,10 +101,11 @@ func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan 
 			}
 		}(f)
 	}
-	wg.Wait()
 	return nil
 }
 
+// WriteDDL writes main table creation, index creation, and ref_table creation and inserts to
+// the DumpWriter.SchemaFile. If at any step, a write cannot be completed, a non-nil error is returned.
 func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices []string) error {
 	// once we write the DDL, we can close this file
 	defer dw.SchemaFile.Close()
@@ -115,11 +139,18 @@ func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices 
 	return nil
 }
 
+// DumpWriter writes the database SQL representation of a fixed-width file. The SchemaFile
+// will represent the file where table creation, index creation, and ref_table creation and insertions
+// will take place. OutFiles hold where insertion statements will take place.
 type DumpWriter struct {
 	SchemaFile *os.File
 	OutFiles   []*os.File
 }
 
+// writeToDump reads ParsedResults from a channel, and writes the results to an output
+// file. In the case of errors in the ParsedResult, the function returns with a non-nil
+// error. If a parsed block of insertion statements cannot be written, the file will be closed
+// and deleted, and a non-nil error is returned.
 func writeToDump(outFile *os.File, parsedStream <-chan ParsedResult) error {
 	for res := range parsedStream {
 		if res.AnyError != nil {
@@ -136,16 +167,16 @@ func writeToDump(outFile *os.File, parsedStream <-chan ParsedResult) error {
 	return nil
 }
 
-// NumOutFiles determines, based on the size of a dat file, the number of
+// numOutFiles determines, based on the size of a fixed-width file, the
+// number of output files to create.
 func numOutFiles(totBytes int) int {
-	// Each out file should be at most 10 gigabytes
-	// so if the totBytes is 12 gb, we should have 2 out files
-	bytesIn1GiB := 1 << 30
-	maxBytesPerFile := bytesIn1GiB * 10
+	// Each out file should be at most maxBytesPerFile bytes
+	// so if the totBytes is X bytes, we should have
+	// (X / maxBytesPerFile) + (totBytes%maxBytesPerFile > 0 ? 1 : 0) outFiles
 	remainderF := 0
 	if totBytes%maxBytesPerFile > 0 { // almost always the case, but just in case of mod == 0
 		remainderF = 1
 	}
-	numFiles := (totBytes / bytesIn1GiB) + remainderF
+	numFiles := (totBytes / maxBytesPerFile) + remainderF
 	return numFiles
 }

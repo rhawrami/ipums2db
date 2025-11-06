@@ -149,7 +149,7 @@ func PrintJobSummary(silent bool, delim, dbT, tabN, idx, ddi, datFN string) {
 	if silent {
 		return
 	}
-	delimLong := strings.Repeat(delim, len(datFN))
+	delimLong := strings.Repeat(delim, len(datFN)+5) // includes the "dat: " chars, so add 5
 	fmt.Printf(
 		"%s\ndbT: %s\ntab: %s\nidx: %s\nxml: %s\ndat: %s\n%s\n",
 		delimLong, dbT, tabN, idx, ddi, datFN, delimLong,

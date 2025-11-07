@@ -80,17 +80,18 @@ type DatabaseFormatter struct {
 // returns error if a variable's interval type is not in {"contin", "discrete"}
 func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 	init_statement := fmt.Sprintf("CREATE TABLE %s (", dbf.TableName)
-	ddl_table := init_statement
+	var ddl_table strings.Builder
+	ddl_table.WriteString(init_statement)
 
 	for i, v := range ddi.Vars {
-		var typeToUse, nameAndType string
+		var typeToUse, nameAndType strings.Builder
 		// if a var has decimal places, make it float
 		if v.DecimalPoint != 0 {
 			// make numeric type with precision := width; scale := decimalpoint
-			typeToUse = fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint)
+			typeToUse.WriteString(fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint))
 		} else if v.VType.VarType == "character" {
 			// character types, rare, but occasionally there
-			typeToUse = fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width)
+			typeToUse.WriteString(fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width))
 		} else {
 			switch v.Interval {
 			case "contin", "discrete":
@@ -100,9 +101,9 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 				// if for some reason, a column has more than 10 characters,
 				// make it a string type
 				if v.Location.Width > maxPlacesFori32 {
-					typeToUse = fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width) // make varchar(N) for var with max N chars
+					typeToUse.WriteString(fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width)) // make varchar(N) for var with max N chars
 				} else {
-					typeToUse = dbf.DataTypes["int"] // the rest of vars are ints
+					typeToUse.WriteString(dbf.DataTypes["int"]) // the rest of vars are ints
 				}
 			default:
 				return nil, fmt.Errorf("unrecognized interval type %s for var %s", strings.ToLower(v.Name), v.Interval)
@@ -114,12 +115,12 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 		} else {
 			addComma = ","
 		}
-		nameAndType = fmt.Sprintf("\n\t%s %s%s\t-- %s", strings.ToLower(v.Name), typeToUse, addComma, v.Label)
-		ddl_table += nameAndType
+		nameAndType.WriteString(fmt.Sprintf("\n\t%s %s%s\t-- %s", strings.ToLower(v.Name), typeToUse, addComma, v.Label))
+		ddl_table.WriteString(nameAndType.String())
 	}
-	ddl_table += "\n);\n\n"
+	ddl_table.WriteString("\n);\n\n")
 
-	return []byte(ddl_table), nil
+	return []byte(ddl_table.String()), nil
 }
 
 // CreateRefTables generates "CREATE TABLE" and "INSERT INTO ref_var" statements for the set of discrete variables in a data-dictionary, returning
@@ -144,7 +145,7 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 //
 // returns error if data dictionary contains zero discrete variables
 func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
-	ddlStatement := ""
+	var ddlStatement strings.Builder
 	discreteVarCtr := 0 // return err if no discrete variables (e.g., no table statements)
 	for _, v := range ddi.Vars {
 		if v.Interval == "discrete" {
@@ -155,9 +156,10 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 
 			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s\n);\n\n", dbf.DataTypes["int"], dbf.DataTypes["string"])
 			refTable += catAndType
-			ddlStatement += refTable
+			ddlStatement.WriteString(refTable)
 
-			insertStatement := fmt.Sprintf("INSERT INTO %s (val, label)\nVALUES", tableName)
+			var insertStatement strings.Builder
+			insertStatement.WriteString(fmt.Sprintf("INSERT INTO %s (val, label)\nVALUES", tableName))
 			for i, cat := range v.Cats {
 				var addComma string
 				if i == (len(v.Cats) - 1) {
@@ -167,16 +169,16 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 				}
 				escapedLabel := strings.ReplaceAll(cat.Label, "'", "''")
 				valAndLab := fmt.Sprintf("\n\t(%s, '%s')%s", cat.Val, escapedLabel, addComma)
-				insertStatement += valAndLab
+				insertStatement.WriteString(valAndLab)
 			}
-			insertStatement += ";\n\n"
-			ddlStatement += insertStatement
+			insertStatement.WriteString(";\n\n")
+			ddlStatement.WriteString(insertStatement.String())
 		}
 	}
 	if discreteVarCtr == 0 {
 		return nil, fmt.Errorf("zero discrete variables included")
 	}
-	return []byte(ddlStatement), nil
+	return []byte(ddlStatement.String()), nil
 }
 
 // CreateIndices generates "CREATE INDEX idx_var" statements for a set of columns. As of now, does not
@@ -184,15 +186,15 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 //
 // returns error if a column is not recognized in the data dictionary
 func (dbf *DatabaseFormatter) CreateIndices(ddi *DataDict, cols []string) ([]byte, error) {
-	indexStatements := ""
+	var indexStatements strings.Builder
 	varNames := dbf.VariableNames(ddi)
 	for _, col := range cols {
 		if !slices.Contains(varNames, strings.ToLower(col)) {
 			return nil, fmt.Errorf("cannot create idx on unrecognized variable %s", col)
 		}
-		indexStatements += fmt.Sprintf("CREATE INDEX idx_%s ON %s (%s);\n\n", col, dbf.TableName, col)
+		indexStatements.WriteString(fmt.Sprintf("CREATE INDEX idx_%s ON %s (%s);\n\n", col, dbf.TableName, col))
 	}
-	return []byte(indexStatements), nil
+	return []byte(indexStatements.String()), nil
 }
 
 // VariableNames returns the included variables from a data dictionary
@@ -244,7 +246,8 @@ func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, datFile *os.File, startA
 //
 // returns error if start and end positions are not valid for row.
 func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, error) {
-	insertStatement := "\t("
+	var insertStatement strings.Builder
+	insertStatement.WriteString("\t(")
 	for i, v := range ddi.Vars {
 		start, end := v.Location.Start-1, v.Location.End
 		if (start < 0) || (end > len(row)) {
@@ -274,11 +277,12 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 		}
 
 		if i != (len(ddi.Vars) - 1) {
-			insertStatement += sChars + ","
+			insertStatement.WriteString(sChars)
+			insertStatement.WriteString(",")
 		} else {
-			insertStatement += sChars
+			insertStatement.WriteString(sChars)
 		}
 	}
-	insertStatement += "),\n"
-	return []byte(insertStatement), nil
+	insertStatement.WriteString("),\n")
+	return []byte(insertStatement.String()), nil
 }

@@ -2,7 +2,7 @@
 Convert IPUMS data extracts to database dump files
 
 ## description
-`ipums2db` is a program that converts IPUMS fixed-width file extracts to relational database dump files. 
+`ipums2db` converts IPUMS fixed-width file extracts to relational database dump files. 
 
 Per IPUMS, the [Integrated Public Use Microdata Series](https://www.ipums.org/)...
 > "provides census and survey data from around the world integrated across time and space. IPUMS integration and documentation makes it easy to study change, conduct comparative research, merge information across data types, and analyze individuals within family and community contexts. Data and services available free of charge."
@@ -24,7 +24,7 @@ $ ipums2db -x data/cps_777.xml data/cps_777.dat
 ```
 Here we see our input configuration, and output summary. There are a number of flags available:
 ### flags
-#### `-db \<database name\>`
+#### `-db <database name>`
 - Name of your database system; currently supported options include:
 
     1. `postgres`
@@ -33,33 +33,39 @@ Here we see our input configuration, and output summary. There are a number of f
     4. `oracle`
 - Defaults to `postgres`
 
-#### `-t \<table name\>`
+#### `-t <table name>`
 - Name that the database table should be
 - Defaults to `ipums_tab`
 
-#### `-i \<indexCol1,indexCol2\>`
+#### `-i <indexCol1,indexCol2>`
 - Indices to create; as of now, only single-column indices are supported; additionally, only the default database index structure (usually b+ tree) is supported; to create multiple single-column indices, **separate variable names by a comma**; to create just one index, simply input the column name for that variable
-- Defaults to no index creations
+- Defaults to `""`
 
-#### `-o \<output file name\>`
-- Name that the dump file should be
-- Defaults to `ipums_dump.sql`
+### `-d`
+- Boolean flag: instead of single ".sql" dump file, create dump directory with "schema" and inserts.
+- For very large files, a single sql dump file can be a bit cumbersome to load (note: not impossible, just annoying to wait on a single file to load). To both speed up the program (e.g., allow multiple dump file writers, one for each dump file) and the eventual database inserts, a directory is created, with a single `ddl.sql` file (includes main table creation, index creation, and ref_table creation and inserts), and a variable number of insertion files. Each insertion file holds at most around 10 GiB, so processing a 24 GiB fixed-width file with `-d` would produce 3 insertion files, each of the form `inserts_{i}.sql`.
+- NOTE: processing fixed-width files of size greater than 10 GiB will default to directory format, whether or not the flag is provided.
+
+#### `-o <output file/directory name>`
+- In case of one output file: name that the dump file should be
+- In case of directory format: name of the output directory
+- Defaults to `ipums_dump.sql | ipums_dump/`
 
 #### `-s`
 - silent boolean flag; will silence standard output messages
-- defaults to false
+- defaults to `false`
 
 ### example usage
 1. no optional arguments provided:
 ```bash
 $ ipums2db -x data/cps_777.xml data/cps_777.dat
-====================
+=====================
 dbT: postgres
 tab: ipums_tab
 idx:
 xml: data/cps_777.xml
 dat: data/cps_777.dat
-====================
+=====================
 Time elapsed: 10.002s (410.07 MiB/s)
 Dump written to: ipums_dump.sql
 ```
@@ -85,16 +91,20 @@ $ ls *.sql
 gimmeMyFileQuick.sql
 ```
 
-## coming soon
-- **Directory format output**:
-
-    - For very large files, a single sql dump file can be a bit cumbersome to load (note: not impossible, just annoying to wait on a single file to load). To both speed up the program (e.g., allow multiple dump file writers, one for each dump file) and the eventual database inserts, allow for a directory format structure for output:
-    ```bash
-    $ ls -1 ipums_dump/
-    ddl.sql # includes table and index creations
-    inserts_0.sql # first insert dump file
-    inserts_1.sql
-    inserts_2.sql
-    ...
-    inserts_N.sql # last insert dump file
-    ```
+3. databaseType: `oracle`; makeItDir: `true`; outFile: `myDumpDir`
+```bash
+$ ipums2db -x data/cps_777.xml -db oracle -d -o myDumpDir data/cps_777.dat
+=========================
+dbT: oracle
+tab: ipums_tab
+idx:
+xml: data/cps_777.xml
+dat: data/cps_777.dat
+=========================
+Time elapsed: 30.821s (407.38 MiB/s)
+Dump written to: myDumpDir
+$ ls -1 myDumpDir/
+ddl.sql
+inserts_0.sql
+inserts_1.sql
+```

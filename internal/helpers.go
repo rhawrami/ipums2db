@@ -11,15 +11,20 @@ import (
 	"time"
 )
 
+// maxBytesofDatFileInMemory determines the maximum byte count of fixed-width file data in memory,
+// assumine that every parser and writer goroutine is working on a block of data at the same time.
+// As of now, it is set at 100 MiB, but this value will be revisited.
+const maxBytesofDatFileInMemory = (1 << 20) * 100
+
 // NewJobConfig returns a JobConfig that will be used to determine the max bytes processed
 // per parsing job, the size of the parsed results buffered channel, and the number of
 // parsers. A number of arbitrary decisions are made, but they should work for a number of
 // different users. Hopefully :)
 func NewJobConfig(totBytes int, nWriters int) JobConfig {
 	// decide on NumParsers
-	// there should be 5 parsers at max; writes will be the bottleneck
+	// there should be 5 parsers at max and 2 parsers at minimum; writes will be the bottleneck.
 	// note that this is an arbitrary selection, but 5 performs pretty well.
-	MAXPARSERS := 5
+	MINPARSERS, MAXPARSERS := 2, 5
 	nCPU := runtime.NumCPU()
 	nParsers := 1
 	if nCPU > nParsers {
@@ -27,19 +32,19 @@ func NewJobConfig(totBytes int, nWriters int) JobConfig {
 		if nCPUsSaveParseWrite > 0 {
 			chooseFrom := []int{nCPUsSaveParseWrite, MAXPARSERS}
 			nParsers = slices.Min(chooseFrom)
+		} else {
+			nParsers = MINPARSERS
 		}
 	}
 	// ParsedResChanrSize will just be the size of nParsers
 	parsedResChanSize := nParsers
 	// decide on MaxBytesPerJob
-	// at any given moment, at most I'd like there to be at most 100 MiB
+	// at any given moment, at most I'd like there to be at most maxBytesofDatFileInMemory bytes
 	// of the dat file in memory. This means that, the max number of bytes
-	// processed in each parse job should be 100 // (nParsers + nWriters),
+	// processed in each parse job should be maxBytesofDatFileInMemory // (nParsers + nWriters),
 	// as both the  parsers and writers could both be processing/recieving
 	// at the same moment.
-	bytesIn1MiB := 1 << 20
-	MiB100 := bytesIn1MiB * 100
-	maxBPerJ := MiB100 / (nParsers + nWriters)
+	maxBPerJ := maxBytesofDatFileInMemory / (nParsers + nWriters)
 
 	return JobConfig{
 		ParsedResChanSize: parsedResChanSize,
@@ -72,64 +77,6 @@ func TotalBytes(datFileName string) (int, error) {
 	}
 	totBytes := stats.Size()
 	return int(totBytes), nil
-}
-
-// NewDataDictAndDatabaseFormatter (short name, right?) returns a new DataDict and DatabaseFormatter.
-// Returns error if either struct creation fails
-func NewDataDictAndDatabaseFormatter(dbType, tabName, ddiPath string) (DataDict, *DatabaseFormatter, error) {
-	ddi, err := NewDataDict(ddiPath)
-	if err != nil {
-		return DataDict{}, nil, err
-	}
-
-	dbfmtr, err := NewDBFormatter(dbType, tabName)
-	if err != nil {
-		return DataDict{}, nil, err
-	}
-
-	return ddi, dbfmtr, nil
-}
-
-// WriteDDL writes the table and indices creations to the dump file
-func WriteDDL(dumpFile *os.File, dbfmtr *DatabaseFormatter, ddi *DataDict, indices []string) error {
-	// main table creation
-	tableSQL, err := dbfmtr.CreateMainTable(ddi)
-	if err != nil {
-		return fmt.Errorf("ipums2db: table creation: %w", err)
-	}
-	// ref tables
-	refTablesSQL, err := dbfmtr.CreateRefTables(ddi)
-	if err != nil {
-		return fmt.Errorf("ipums2db: reference tables creation: %w", err)
-	}
-	// indices
-	indicesSQL, err := dbfmtr.CreateIndices(ddi, indices)
-	if err != nil {
-		return fmt.Errorf("ipums2db: index creation: %w", err)
-	}
-
-	lenDDL := len(tableSQL) + len(refTablesSQL) + len(indicesSQL)
-	buffer := make([]byte, 0, lenDDL)
-	// append DDL
-	buffer = append(buffer, tableSQL...)
-	buffer = append(buffer, refTablesSQL...)
-	buffer = append(buffer, indicesSQL...)
-
-	_, err = dumpFile.Write(buffer)
-	if err != nil {
-		return fmt.Errorf("ipums2db: DDL write: %v", err)
-	}
-
-	return nil
-}
-
-// CreateDumpFile creates a dump file to be used for outputting parsed results.
-func CreateDumpFile(dumpFileName string) (*os.File, error) {
-	file, err := os.Create(dumpFileName)
-	if err != nil {
-		return nil, err
-	}
-	return file, nil
 }
 
 // PrintFinalSummary prints the time elapsed for a parsing job, as well as the MiB parsed per second

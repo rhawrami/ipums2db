@@ -31,18 +31,18 @@ const maxPlacesFori32 int = 10
 // returns error if dbType is not one of the supported and recognized types
 func getDataTypes(dbType string) (map[string]string, error) {
 	types2DBtypes := map[string]string{
-		"int":    "INT",
-		"float":  "NUMERIC",
-		"string": "VARCHAR",
+		"int":    "int",
+		"float":  "numeric",
+		"string": "varchar",
 	}
 
 	switch strings.ToLower(dbType) {
 	case POSTGRES, MSSQL:
 	case MYSQL:
-		types2DBtypes["float"] = "DECIMAL"
+		types2DBtypes["float"] = "decimal"
 	case ORACLE:
-		types2DBtypes["float"] = "NUMBER"
-		types2DBtypes["string"] = "VARCHAR2"
+		types2DBtypes["float"] = "number"
+		types2DBtypes["string"] = "varchar2"
 	default:
 		return nil, fmt.Errorf("unrecognized database type '%s' not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
 	}
@@ -88,6 +88,9 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 		if v.DecimalPoint != 0 {
 			// make numeric type with precision := width; scale := decimalpoint
 			typeToUse = fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint)
+		} else if v.VType.VarType == "character" {
+			// character types, rare, but occasionally there
+			typeToUse = fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width)
 		} else {
 			switch v.Interval {
 			case "contin", "discrete":
@@ -250,22 +253,24 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 
 		chars := row[start:end]
 		var sChars string
-		// handle decimal places
-		if v.DecimalPoint != 0 {
+
+		switch {
+		// some dat files contain empty spaces unfortunately
+		// in these cases, we have to convert to null
+		case slices.Contains(chars, byte(' ')):
+			chars = []byte("null")
+			sChars = string(chars)
+		// floating point types
+		case v.DecimalPoint != 0:
 			placeDecimalAt := len(chars) - v.DecimalPoint
 			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
 			sChars = string(chars)
-		} else {
-			if v.Location.Width > maxPlacesFori32 {
-				sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
-			} else {
-				// some dat files contain empty spaces unfortunately
-				// in these cases, we have to convert to null
-				if slices.Contains(chars, byte(' ')) {
-					chars = []byte("null")
-				}
-				sChars = string(chars) // int types
-			}
+		// string types
+		case (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character"):
+			sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
+		// int types
+		default:
+			sChars = string(chars)
 		}
 
 		if i != (len(ddi.Vars) - 1) {

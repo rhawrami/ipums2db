@@ -41,7 +41,7 @@ Here we see our input configuration, and output summary. There are a number of f
 - Indices to create; as of now, only single-column indices are supported; additionally, only the default database index structure (usually b+ tree) is supported; to create multiple single-column indices, **separate variable names by a comma**; to create just one index, simply input the column name for that variable
 - Defaults to `""`
 
-### `-d`
+#### `-d`
 - Boolean flag: instead of single ".sql" dump file, create dump directory with "schema" and inserts.
 - For very large files, a single sql dump file can be a bit cumbersome to load (note: not impossible, just annoying to wait on a single file to load). To both speed up the program (e.g., allow multiple dump file writers, one for each dump file) and the eventual database inserts, a directory is created, with a single `ddl.sql` file (includes main table creation, index creation, and ref_table creation and inserts), and a variable number of insertion files. Each insertion file holds at most around 10 GiB, so processing a 24 GiB fixed-width file with `-d` would produce 3 insertion files, each of the form `inserts_{i}.sql`.
 - NOTE: processing fixed-width files of size greater than 10 GiB will default to directory format, whether or not the flag is provided.

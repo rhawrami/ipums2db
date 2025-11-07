@@ -57,11 +57,3 @@ type ParsedResult struct {
 	Block    []byte
 	AnyError error
 }
-
-// A ParserConfig contains the name of a fixed-width file, a channel of jobs that a ParseBlock call
-// should read from, and a channel of parsed results that a ParseBlock call should write to.
-type ParserConfig struct {
-	DatFileName  string
-	JobStream    chan ParsingJob
-	ParsedStream chan ParsedResult
-}

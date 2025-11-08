@@ -110,7 +110,8 @@ func main() {
 	}()
 
 	// spawn writer[s]
-	dw.WriteParsedResults(&writerWG, parsedBlockStream)
+	// in case of any write errors, delete files/directories and exit immediately
+	dw.WriteParsedResults(&writerWG, parsedBlockStream, checkErr)
 
 	// wait on groups
 	jobMakerWG.Wait()

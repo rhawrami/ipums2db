@@ -94,14 +94,20 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 // WriteParsedResults spawns N := len(DumpWriter.OutFiles) outFile writers to write SQL insertion
 // statements to outFiles. It reads from a channel of ParsedResults, and writes successful results
 // to an outFile.
-func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan ParsedResult) {
+//
+// In case of any write errors, all created files and directories should be deleted, and the program
+// should exit.
+func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan ParsedResult, exitFunc func(err error, topic string)) {
 	wg.Add(len(dw.OutFiles))
 	for _, f := range dw.OutFiles {
 		go func(f *os.File) {
 			defer wg.Done()
 			err := writeToDump(f, parsedStream)
+			// if you can't commit a write, you need to stop all actions
+			// close all files, and delete them, and also exit in some way
 			if err != nil {
-				fmt.Println(err) // need to think about how to handle errors here
+				dw.FileCleanup() // close all files, delete everything
+				exitFunc(err, "DumpWriter")
 			}
 		}(f)
 	}

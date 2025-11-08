@@ -147,6 +147,22 @@ func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices 
 	return nil
 }
 
+// FileCleanup deletes all files created, schema and/our output files
+func (dw DumpWriter) FileCleanup() {
+	// if single-file dump writer, close schema file first
+	if len(dw.OutFiles) == 1 {
+		dw.SchemaFile.Close()
+	}
+	// delete schema file
+	_ = os.Remove(dw.SchemaFile.Name())
+	// delete outFiles
+	for _, f := range dw.OutFiles {
+		// ensure outfiles are closed
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}
+}
+
 // DumpWriter writes the database SQL representation of a fixed-width file. The SchemaFile
 // will represent the file where table creation, index creation, and ref_table creation and insertions
 // will take place. OutFiles hold where insertion statements will take place.

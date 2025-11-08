@@ -121,4 +121,5 @@ $ du -h prettyBigDir/*
 - As noted above, fixed-width files must be decompressed prior to running the program.
 - Currently, there is no check on if you pass the correct pair of DDI and fixed-width files. You can pass an irrelevant IPUMS DDI to a fixed width file it's *supposed to match*, and it'll generate a result, but it certainly won't load into any database.
 - Depending on the character/byte width of a variable, some variables which would intuitively be (or are listed as) integer types will instead be character types. This should be rare, but it can happen.
-- Error handling on file writes is not set up yet. 
+- Error handling on file writes is not that sophisticated at the moment. Given that errors at this step should be rare, this is not that big of an issue, but it's
+still not ideal.

@@ -23,7 +23,7 @@ const (
 // the maximum value for a 32 bit signed int is (2 ** 31 - 1)
 // or 2147483647. This value has ten places. So we need to limit
 // INT columns to those with widths <= 10.
-const maxPlacesFori32 int = 10
+// const maxPlacesFori32 int = 10
 
 // getDataTypes returns a map of traditional types and their
 // database system-specific equivalents
@@ -83,6 +83,19 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 	var ddl_table strings.Builder
 	ddl_table.WriteString(init_statement)
 
+	// occasionally, you'll have column names like "where" or "year", which may
+	// conflict with reserved keywords. So we need to "escape" the column names
+	// in out table creation. The accepted characters for escaping are a little
+	// different by system.
+	var colEscChr string
+	switch dbf.DbType {
+	case "postgres", "oracle", "mssql":
+		colEscChr = `"`
+	case "mysql":
+		colEscChr = "`"
+	default:
+	}
+
 	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType strings.Builder
 		// if a var has decimal places, make it float
@@ -93,21 +106,7 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 			// character types, rare, but occasionally there
 			typeToUse.WriteString(fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width))
 		} else {
-			switch v.Interval {
-			case "contin", "discrete":
-				// the INT type in these database systems defaults to 32 bits
-				// since there's no negative value in these extracts, you can represent
-				// integers from 0 to 2^32 - 1 (which has ten places)
-				// if for some reason, a column has more than 10 characters,
-				// make it a string type
-				if v.Location.Width > maxPlacesFori32 {
-					typeToUse.WriteString(fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width)) // make varchar(N) for var with max N chars
-				} else {
-					typeToUse.WriteString(dbf.DataTypes["int"]) // the rest of vars are ints
-				}
-			default:
-				return nil, fmt.Errorf("unrecognized interval type %s for var %s", strings.ToLower(v.Name), v.Interval)
-			}
+			typeToUse.WriteString(dbf.DataTypes["int"]) // the rest of vars are ints
 		}
 		var addComma string
 		if i == (len(ddi.Vars) - 1) {
@@ -115,7 +114,7 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 		} else {
 			addComma = ","
 		}
-		nameAndType.WriteString(fmt.Sprintf("\n\t%s %s%s\t-- %s", strings.ToLower(v.Name), typeToUse, addComma, v.Label))
+		nameAndType.WriteString(fmt.Sprintf("\n\t%s%s%s %s%s\t-- %s", colEscChr, strings.ToLower(v.Name), colEscChr, typeToUse.String(), addComma, v.Label))
 		ddl_table.WriteString(nameAndType.String())
 	}
 	ddl_table.WriteString("\n);\n\n")
@@ -153,8 +152,9 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 			tableName := "ref_" + strings.ToLower(v.Name)
 			init_statement := fmt.Sprintf("CREATE TABLE %s (", tableName)
 			refTable := init_statement
-
-			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s\n);\n\n", dbf.DataTypes["int"], dbf.DataTypes["string"])
+			// limit labels to 1000 characters, which should be far more than enough
+			maxCharsInLab := 1000
+			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s(%d)\n);\n\n", dbf.DataTypes["int"], dbf.DataTypes["string"], maxCharsInLab)
 			refTable += catAndType
 			ddlStatement.WriteString(refTable)
 
@@ -258,7 +258,7 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 		var sChars string
 
 		switch {
-		// some dat files contain empty spaces unfortunately
+		// some dat files contain empty spaces (i believe these are meant to represent null values)
 		// in these cases, we have to convert to null
 		case slices.Contains(chars, byte(' ')):
 			chars = []byte("null")
@@ -269,18 +269,26 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
 			sChars = string(chars)
 		// string types
-		case (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character"):
+		// case (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character"):
+		case v.VType.VarType == "character":
 			sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
 		// int types
 		default:
 			sChars = string(chars)
 		}
+		// trim leading zeros for numeric types
+		if v.VType.VarType == "numeric" {
+			sChars = strings.TrimLeft(sChars, "0")
+			// if we have an input like "000", then the above trim makes an empty string
+			// just make it "0" if empty
+			if len(sChars) == 0 {
+				sChars = "0"
+			}
+		}
 
+		insertStatement.WriteString(sChars)
 		if i != (len(ddi.Vars) - 1) {
-			insertStatement.WriteString(sChars)
 			insertStatement.WriteString(",")
-		} else {
-			insertStatement.WriteString(sChars)
 		}
 	}
 	insertStatement.WriteString("),\n")

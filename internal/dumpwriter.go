@@ -94,18 +94,17 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 // WriteParsedResults spawns N := len(DumpWriter.OutFiles) outFile writers to write SQL insertion
 // statements to outFiles. It reads from a channel of ParsedResults, and writes successful results
 // to an outFile.
-func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan ParsedResult) error {
+func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan ParsedResult) {
 	wg.Add(len(dw.OutFiles))
 	for _, f := range dw.OutFiles {
 		go func(f *os.File) {
 			defer wg.Done()
 			err := writeToDump(f, parsedStream)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println(err) // need to think about how to handle errors here
 			}
 		}(f)
 	}
-	return nil
 }
 
 // WriteDDL writes main table creation, index creation, and ref_table creation and inserts to

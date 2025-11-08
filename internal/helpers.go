@@ -80,14 +80,14 @@ func TotalBytes(datFileName string) (int, error) {
 }
 
 // PrintFinalSummary prints the time elapsed for a parsing job, as well as the MiB parsed per second
-func PrintFinalSummary(silent bool, start, end time.Time, totBytes int, dumpFile string) {
+func PrintFinalSummary(silent bool, start, end time.Time, totBytes int) {
 	if silent {
 		return
 	}
 	timeElapsed := end.Sub(start).Round(time.Millisecond)
 	bytesInMiB := 1 << 20
 	MiBPerSec := float64(totBytes) / timeElapsed.Seconds() / float64(bytesInMiB)
-	fmt.Printf("\rTime elapsed: %v (%.2f MiB/s)\nDump written to: %s\n", timeElapsed, MiBPerSec, dumpFile)
+	fmt.Printf("\rTime elapsed: %v (%.2f MiB/s)\n", timeElapsed, MiBPerSec)
 }
 
 // PrintJobSummary prints the summary for a program run.
@@ -111,12 +111,12 @@ func PrintLoadingMessage(silent bool) {
 		return
 	}
 	printStatement := []byte("I-P-U-M-S-!")
-	downTime := time.Millisecond * 500
+	delayInBetween := time.Millisecond * 500
 	clearSpaces := strings.Repeat(" ", len(printStatement))
 	for {
 		for i := range printStatement {
 			fmt.Printf("\r%s", string(printStatement[:(i+1)]))
-			time.Sleep(downTime)
+			time.Sleep(delayInBetween)
 		}
 		fmt.Printf("\r%s", clearSpaces)
 	}

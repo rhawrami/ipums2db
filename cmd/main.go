@@ -22,11 +22,11 @@ func main() {
 		makeItDir  bool
 		silentProg bool
 	)
-	flag.StringVar(&dbType, "db", "postgres", "database type; ex. -d postgres")
+	flag.StringVar(&dbType, "b", "postgres", "database type; ex. -b postgres")
 	flag.StringVar(&ddiPath, "x", "", "XML path; ex. -x cps_001.xml")
 	flag.StringVar(&tabName, "t", "ipums_tab", "main table name; ex. -t cps_respondents")
-	flag.StringVar(&indices, "i", "", "indices to create (comma delimit for >1 idx); ex. -i age; ex. -i age,sex")
-	flag.StringVar(&outFile, "o", "ipums_dump.sql", "output file name; ex. -o cps_dump.sql")
+	flag.StringVar(&indices, "i", "", "indices to create (comma-sep for >1 idx); ex. -i age; ex. -i age,sex")
+	flag.StringVar(&outFile, "o", "ipums_dump.sql", "output file/dir name; ex. -o cps_dump.sql")
 	flag.BoolVar(&makeItDir, "d", false, "make directory output format")
 	flag.BoolVar(&silentProg, "s", false, "silent output; ex. -s")
 	// parse flags
@@ -77,7 +77,7 @@ func main() {
 	// job submission summary ----------------------------------------
 	棕熊.PrintJobSummary(silentProg, "=", dbType, tabName, indices, ddiPath, datFileName)
 	// print loading message
-	go 棕熊.PrintLoadingMessage(silentProg)
+	go 棕熊.PrintLoadingMessage(silentProg) // technically never closes/terminates, but it's fine
 
 	// write ddl
 	// note: this includes table and index creations, as well as ref_table[s] creation and inserts
@@ -119,7 +119,7 @@ func main() {
 
 	// end summary ----------------------------------------
 	end := time.Now()
-	棕熊.PrintFinalSummary(silentProg, start, end, int(totBytes), outFile)
+	棕熊.PrintFinalSummary(silentProg, start, end, int(totBytes))
 }
 
 // Helper Functions

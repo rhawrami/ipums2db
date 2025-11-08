@@ -59,11 +59,17 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 	// the outFile will point to the same underlying file.
 	outFiles := make([]*os.File, nOutFiles)
 	for i := 0; i < nOutFiles; i++ {
-		fName := fmt.Sprintf("%s.sql", writerName)
-		if makeItDir {
-			iName := fmt.Sprintf("inserts_%d.sql", i)
-			fName = filepath.Join(writerName, iName)
+		// if not dir format, then there's only one outFile
+		// and it'll be the same as the schema file
+		// we'll have to worry about file closing later on, but we can handle that
+		// in functions downstream in the pipeline
+		if !makeItDir {
+			outFiles[i] = schemaF
+			break
 		}
+
+		iName := fmt.Sprintf("inserts_%d.sql", i)
+		fName := filepath.Join(writerName, iName)
 		f, err := os.Create(fName)
 		if err != nil {
 			// delete all files in case of errors
@@ -75,9 +81,7 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 				}
 			}
 			// remove directory created
-			if makeItDir {
-				_ = os.Remove(writerName)
-			}
+			_ = os.Remove(writerName)
 			return DumpWriter{}, err
 		}
 		outFiles[i] = f
@@ -97,7 +101,7 @@ func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan 
 			defer wg.Done()
 			err := writeToDump(f, parsedStream)
 			if err != nil {
-				return
+				fmt.Println(err)
 			}
 		}(f)
 	}
@@ -107,8 +111,12 @@ func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan 
 // WriteDDL writes main table creation, index creation, and ref_table creation and inserts to
 // the DumpWriter.SchemaFile. If at any step, a write cannot be completed, a non-nil error is returned.
 func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices []string) error {
-	// once we write the DDL, we can close this file
-	defer dw.SchemaFile.Close()
+	// IF DIR FORMAT: once we write the DDL, we can close this file
+	// IF SINGLE FILE FORMAT: we cannot close the file yet. We still have inserts to make
+	if len(dw.OutFiles) > 1 {
+		defer dw.SchemaFile.Close()
+	}
+	// defer dw.SchemaFile.Close()
 	// main table creation
 	tableSQL, err := dbfmtr.CreateMainTable(ddi)
 	if err != nil {

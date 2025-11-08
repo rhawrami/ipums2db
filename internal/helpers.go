@@ -85,7 +85,7 @@ func PrintFinalSummary(silent bool, start, end time.Time, totBytes int, dumpFile
 		return
 	}
 	timeElapsed := end.Sub(start).Round(time.Millisecond)
-	bytesInMiB := 2 << 19
+	bytesInMiB := 1 << 20
 	MiBPerSec := float64(totBytes) / timeElapsed.Seconds() / float64(bytesInMiB)
 	fmt.Printf("\rTime elapsed: %v (%.2f MiB/s)\nDump written to: %s\n", timeElapsed, MiBPerSec, dumpFile)
 }

@@ -123,10 +123,7 @@ func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices 
 		return fmt.Errorf("ipums2db: table creation: %w", err)
 	}
 	// ref tables
-	refTablesSQL, err := dbfmtr.CreateRefTables(ddi)
-	if err != nil {
-		return fmt.Errorf("ipums2db: reference tables creation: %w", err)
-	}
+	refTablesSQL := dbfmtr.CreateRefTables(ddi)
 	// indices
 	indicesSQL, err := dbfmtr.CreateIndices(ddi, indices)
 	if err != nil {

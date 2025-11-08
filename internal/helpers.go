@@ -111,7 +111,7 @@ func PrintLoadingMessage(silent bool) {
 		return
 	}
 	printStatement := []byte("I-P-U-M-S-!")
-	downTime := time.Millisecond * 400
+	downTime := time.Millisecond * 500
 	clearSpaces := strings.Repeat(" ", len(printStatement))
 	for {
 		for i := range printStatement {

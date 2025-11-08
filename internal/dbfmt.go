@@ -20,10 +20,11 @@ const (
 	MSSQL    string = "mssql"
 )
 
+// the INT type in these database systems defaults to 32 bits
 // the maximum value for a 32 bit signed int is (2 ** 31 - 1)
 // or 2147483647. This value has ten places. So we need to limit
 // INT columns to those with widths <= 10.
-// const maxPlacesFori32 int = 10
+const maxPlacesFori32 int = 10
 
 // getDataTypes returns a map of traditional types and their
 // database system-specific equivalents
@@ -98,16 +99,17 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 
 	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType strings.Builder
-		// if a var has decimal places, make it float
-		if v.DecimalPoint != 0 {
-			// make numeric type with precision := width; scale := decimalpoint
+		// get column type
+		switch colType := dbf.columnType(v); colType {
+		case "float":
 			typeToUse.WriteString(fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint))
-		} else if v.VType.VarType == "character" {
-			// character types, rare, but occasionally there
+		case "string":
 			typeToUse.WriteString(fmt.Sprintf("%s(%d)", dbf.DataTypes["string"], v.Location.Width))
-		} else {
+		case "int":
 			typeToUse.WriteString(dbf.DataTypes["int"]) // the rest of vars are ints
+		default: // in future, maybe add other types
 		}
+
 		var addComma string
 		if i == (len(ddi.Vars) - 1) {
 			addComma = ""
@@ -142,21 +144,21 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 //	(2, 'Yes, in the labor force'),
 //	(9, 'Unclassifiable (employment status unknown)');
 //
-// returns error if data dictionary contains zero discrete variables
-func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
+// returns empty byte slice if there are no discrete variables
+func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) []byte {
 	var ddlStatement strings.Builder
-	discreteVarCtr := 0 // return err if no discrete variables (e.g., no table statements)
+
 	for _, v := range ddi.Vars {
 		if v.Interval == "discrete" {
-			discreteVarCtr += 1
 			tableName := "ref_" + strings.ToLower(v.Name)
-			init_statement := fmt.Sprintf("CREATE TABLE %s (", tableName)
-			refTable := init_statement
+			var refTable strings.Builder
+			refTable.WriteString(fmt.Sprintf("CREATE TABLE %s (", tableName))
 			// limit labels to 1000 characters, which should be far more than enough
 			maxCharsInLab := 1000
-			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s(%d)\n);\n\n", dbf.DataTypes["int"], dbf.DataTypes["string"], maxCharsInLab)
-			refTable += catAndType
-			ddlStatement.WriteString(refTable)
+			colType := dbf.columnType(v)
+			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s(%d)\n);\n\n", colType, dbf.DataTypes["string"], maxCharsInLab)
+			refTable.WriteString(catAndType)
+			ddlStatement.WriteString(refTable.String())
 
 			var insertStatement strings.Builder
 			insertStatement.WriteString(fmt.Sprintf("INSERT INTO %s (val, label)\nVALUES", tableName))
@@ -175,10 +177,8 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) ([]byte, error) {
 			ddlStatement.WriteString(insertStatement.String())
 		}
 	}
-	if discreteVarCtr == 0 {
-		return nil, fmt.Errorf("zero discrete variables included")
-	}
-	return []byte(ddlStatement.String()), nil
+
+	return []byte(ddlStatement.String())
 }
 
 // CreateIndices generates "CREATE INDEX idx_var" statements for a set of columns. As of now, does not
@@ -225,11 +225,15 @@ func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, datFile *os.File, startA
 		}
 	}
 
+	// get the column types once, which should slightly speed up the
+	// tuple-insert-statement processing below
+	colTypes := dbf.columnTypes(ddi)
 	bulkInsertInit := fmt.Sprintf("INSERT INTO %s VALUES\n", dbf.TableName)
+
 	dat := make([]byte, 0, len(buffer))
 	for i := 0; i < len(buffer); i += bytesPerLine {
 		row := buffer[i:(i + bytesPerLine)]
-		inserts, err := dbf.insertTuple(ddi, row)
+		inserts, err := dbf.insertTuple(ddi, row, colTypes)
 		if err != nil {
 			return nil, fmt.Errorf("error row %v: %w", row, err)
 		}
@@ -240,12 +244,12 @@ func (dbf *DatabaseFormatter) BulkInsert(ddi *DataDict, datFile *os.File, startA
 	return bulkInsertStatement, nil
 }
 
-// insertTuple generates a single insertion tuple, given a row byte slice and a data dictionary.
+// insertTuple generates a single insertion tuple, given a row byte slice, data dictionary, and column types.
 // Note that this statement does not include the insertion statement itself, as the BulkInsert method
 // will be used to create insertion statements.
 //
 // returns error if start and end positions are not valid for row.
-func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, error) {
+func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte, colTypes map[string]string) ([]byte, error) {
 	var insertStatement strings.Builder
 	insertStatement.WriteString("\t(")
 	for i, v := range ddi.Vars {
@@ -257,33 +261,31 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 		chars := row[start:end]
 		var sChars string
 
-		switch {
-		// some dat files contain empty spaces (i believe these are meant to represent null values)
-		// in these cases, we have to convert to null
-		case slices.Contains(chars, byte(' ')):
+		// null values
+		if slices.Contains(chars, byte(' ')) {
 			chars = []byte("null")
 			sChars = string(chars)
-		// floating point types
-		case v.DecimalPoint != 0:
+			insertStatement.WriteString(sChars)
+			if i != (len(ddi.Vars) - 1) {
+				insertStatement.WriteString(",")
+			}
+			continue
+		}
+
+		switch colType := colTypes[v.Name]; colType {
+		case "string":
+			sChars = fmt.Sprintf("'%s'", string(chars))
+		case "float":
 			placeDecimalAt := len(chars) - v.DecimalPoint
 			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
 			sChars = string(chars)
-		// string types
-		// case (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character"):
-		case v.VType.VarType == "character":
-			sChars = fmt.Sprintf("'%s'", string(chars)) // handle string types
-		// int types
-		default:
+		case "int":
 			sChars = string(chars)
-		}
-		// trim leading zeros for numeric types
-		if v.VType.VarType == "numeric" {
-			sChars = strings.TrimLeft(sChars, "0")
-			// if we have an input like "000", then the above trim makes an empty string
-			// just make it "0" if empty
+			sChars = strings.TrimLeft(sChars, "0") // trim to reduce outFile sizes
 			if len(sChars) == 0 {
 				sChars = "0"
 			}
+		default:
 		}
 
 		insertStatement.WriteString(sChars)
@@ -293,4 +295,39 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte) ([]byte, er
 	}
 	insertStatement.WriteString("),\n")
 	return []byte(insertStatement.String()), nil
+}
+
+// columnTypes returns a map of variable names and their database-equivalent column types
+// this function will be used to generate a map that'll be continually used to find types
+// in BulkInsert calls
+func (dbf *DatabaseFormatter) columnTypes(ddi *DataDict) map[string]string {
+	colToType := make(map[string]string)
+	for _, v := range ddi.Vars {
+		colToType[v.Name] = dbf.columnType(v)
+	}
+	return colToType
+}
+
+// columnType is a helper function that returns the type that
+// a database column should have: options include ["int", "float", "string"]
+func (dbf *DatabaseFormatter) columnType(v Var) string {
+	// if a column has decimal point places > 0 -> must be float
+	if v.DecimalPoint > 0 {
+		return "float"
+	}
+	// if the variable type is a character type -> must be string
+	// if the variable has width > 10 -> must be string
+	// NOTE: the (width > 10) rule will occasionally trigger unnecessarily; leading
+	// zeros can be trimmed off and make widthActual <= 10; but this runs the risk of making
+	// the column an int type; then when inserting rows, a single row with widthActual > 10 will
+	// cause an insert statement not to go through. I prioritize insert success over occasionally
+	// misinterpreting a variable type. Type conversions, if needed, can occur after loading the data
+	// in; the inverse case, creating an int column and then inserting a tuple with the column variable
+	// having width > 10, cannot be recovered from without either manually updating the insert file, or
+	// changing the column type to string (again leading to manually updating the insert file)
+	if (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character") {
+		return "string"
+	}
+	// return int in all other cases
+	return "int"
 }

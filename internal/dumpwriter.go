@@ -133,7 +133,6 @@ func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices 
 	if len(dw.OutFiles) > 1 || len(dw.OutFiles) == 0 {
 		defer dw.SchemaFile.Close()
 	}
-	// defer dw.SchemaFile.Close()
 	// main table creation
 	tableSQL, err := dbfmtr.CreateMainTable(ddi)
 	if err != nil {

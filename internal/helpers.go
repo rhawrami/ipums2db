@@ -122,7 +122,7 @@ func PrintLoadingMessage(silent bool) {
 	}
 }
 
-// MkDDL writes the DDL statement only; used for mkddl subcommand
+// MkDDL writes the DDL statement only; used for when only -x flag is passed, and not dat file arg
 func MkDDL(dbType, tabName, ddiFileName, outFileName string, idx []string, silence bool) error {
 	// DatabaseFormatter
 	dbfmtr, err := NewDBFormatter(dbType, tabName, true)
@@ -146,6 +146,7 @@ func MkDDL(dbType, tabName, ddiFileName, outFileName string, idx []string, silen
 	// write it all
 	err = dw.WriteDDL(dbfmtr, &ddi, idx)
 	if err != nil {
+		dw.FileCleanup() // delete file if unable to write DDL
 		return err
 	}
 	if !silence {

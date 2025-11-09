@@ -121,3 +121,31 @@ func PrintLoadingMessage(silent bool) {
 		fmt.Printf("\r%s", clearSpaces)
 	}
 }
+
+// MkDDL writes the DDL statement only; used for mkddl subcommand
+func MkDDL(dbType, tabName, ddiFileName, outFileName string, idx []string, silence bool) error {
+	// DatabaseFormatter
+	dbfmtr, err := NewDBFormatter(dbType, tabName, true)
+	if err != nil {
+		return err
+	}
+	// DataDict
+	ddi, err := NewDataDict(ddiFileName)
+	if err != nil {
+		return err
+	}
+	// DDL writer
+	dw, err := NewDumpWriterDDLOnly(outFileName)
+	if err != nil {
+		return err
+	}
+	// write it all
+	err = dw.WriteDDL(dbfmtr, &ddi, idx)
+	if err != nil {
+		return err
+	}
+	if !silence {
+		fmt.Printf("DDL file written to %s\n", outFileName)
+	}
+	return nil
+}

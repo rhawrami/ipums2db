@@ -3,6 +3,7 @@
 package internal
 
 import (
+	"fmt"
 	"os"
 	"sync"
 )
@@ -31,7 +32,8 @@ func (dp DatParser) ParseBlocks(wg *sync.WaitGroup, jobStream <-chan ParsingJob,
 			defer wg.Done()
 			datFile, err := os.Open(dp.datFileName)
 			if err != nil {
-				return // come back to this
+				fmt.Printf("error: DatParser unable to open %s\n", dp.datFileName)
+				return // one parser unable to open the file != other parsers can't open the file
 			}
 			defer datFile.Close()
 			for job := range jobStream {

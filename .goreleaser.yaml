@@ -8,6 +8,8 @@
 
 version: 2
 
+project_name: ipums2db
+
 before:
   hooks:
     # You may remove this if you don't use go modules.
@@ -16,7 +18,8 @@ before:
     - go generate ./...
 
 builds:
-  - id: ipums2db
+  - id: "ipums2db"
+    # main path
     main: ./cmd/main.go
     # ignore 32 bit arch
     goarch:
@@ -43,6 +46,26 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+
+brews:
+  - name: ipums2db
+    commit_author:
+      name: rhawrami
+      email: ravanhawrami@gmail.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    directory: Formula
+    homepage: "https://github.com/rhawrami/ipums2db"
+    description: "Convert IPUMS data extracts to database dump files"
+    license: "MIT"
+    install: |
+      bin.install "ipums2db"
+    test: |
+      system "#{bin}/ipums2db --help"
+    repository:
+      owner: rhawrami
+      name: homebrew-ipums2db
+      branch: main
+      token: "{{ .Env.GITHUB_TOKEN }}"
 
 changelog:
   sort: asc

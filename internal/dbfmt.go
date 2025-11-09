@@ -259,6 +259,7 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte, colTypes ma
 	var insertStatement strings.Builder
 	insertStatement.WriteString("\t(")
 	for i, v := range ddi.Vars {
+
 		start, end := v.Location.Start-1, v.Location.End
 		if (start < 0) || (end > len(row)) {
 			return nil, fmt.Errorf("startAt %d & endAt %d not valid index range for sliceLen %d", start, end, len(row))
@@ -282,8 +283,11 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte, colTypes ma
 		case "string":
 			sChars = fmt.Sprintf("'%s'", string(chars))
 		case "float":
-			placeDecimalAt := len(chars) - v.DecimalPoint
-			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
+			// for true float cases (not float due to width concerns)
+			if v.DecimalPoint != 0 {
+				placeDecimalAt := len(chars) - v.DecimalPoint
+				chars = slices.Insert(chars, placeDecimalAt, byte('.'))
+			}
 			sChars = string(chars)
 		case "int":
 			sChars = string(chars)

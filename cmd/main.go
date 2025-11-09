@@ -40,7 +40,7 @@ func main() {
 	// args
 	cmdArgs := flag.Args()
 	// ensure at most one argument is provided
-	checkOneArg(cmdArgs)
+	checkOneArg(cmdArgs, silentProg)
 
 	// in case of schema only, we can just generate the DDL, then exit
 	if len(cmdArgs) == 0 {
@@ -161,13 +161,13 @@ func parseIndicesFlag(indF string) []string {
 
 // checkOneArg checks if either there is more than one argument provided, or if no arguments are provided
 // if no arguments are provided, assume that user only wants schema file
-func checkOneArg(args []string) {
+func checkOneArg(args []string, silence bool) {
 	if len(args) > 1 {
 		fmt.Printf("ipums2db: args: only provide one argument (path to .dat file)\nsee --help for more\n")
 		os.Exit(2)
 	}
 	if len(args) == 0 {
-		fmt.Printf("%s: generating only schema/DDL\n", os.Args[0])
+		fmt.Printf("%s: warning: generating only schema/DDL\n", os.Args[0])
 	}
 }
 
@@ -185,9 +185,13 @@ Flags:
  -o <outFileOrDir>            File/Directory to output (default 'ipums_dump.sql')
  -s                           Silent output (default false)
 
+If <dat> is not provided, only the schema/DDL file will be generated.
+
+Schema Only Usage Example:
+ %s -b mysql -o my_schema.sql -x myACS.xml
 Full Usage Example:
  %s -b mysql -t mytab -i age,sex -o mydump.sql -x myACS.xml myACS.dat
 For more information, visit https://github.com/rhawrami/ipums2db
 `
-	fmt.Printf(usageStatement, os.Args[0], os.Args[0])
+	fmt.Printf(usageStatement, os.Args[0], os.Args[0], os.Args[0])
 }

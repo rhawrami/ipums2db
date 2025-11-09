@@ -22,13 +22,15 @@ func main() {
 		makeItDir  bool
 		silentProg bool
 	)
-	flag.StringVar(&dbType, "b", "postgres", "database type; ex. -b postgres")
-	flag.StringVar(&ddiPath, "x", "", "XML path; ex. -x cps_001.xml")
-	flag.StringVar(&tabName, "t", "ipums_tab", "main table name; ex. -t cps_respondents")
-	flag.StringVar(&indices, "i", "", "indices to create (comma-sep for >1 idx); ex. -i age; ex. -i age,sex")
-	flag.StringVar(&outFile, "o", "ipums_dump.sql", "output file/dir name; ex. -o cps_dump.sql")
+	flag.StringVar(&dbType, "b", "postgres", "database type")
+	flag.StringVar(&ddiPath, "x", "", "XML path (MANDATORY)")
+	flag.StringVar(&tabName, "t", "ipums_tab", "main table name")
+	flag.StringVar(&indices, "i", "", "indices to create; comma-delim for multiple")
 	flag.BoolVar(&makeItDir, "d", false, "make directory output format")
-	flag.BoolVar(&silentProg, "s", false, "silent output; ex. -s")
+	flag.StringVar(&outFile, "o", "ipums_dump.sql", "output file/dir name")
+	flag.BoolVar(&silentProg, "s", false, "silence output")
+	// usage
+	flag.Usage = printUsage
 	// parse flags
 	flag.Parse()
 	// check if DDI path isn't empty
@@ -135,7 +137,7 @@ func checkErr(err error, topic string) {
 // checkDDIFlag checks if the ddi path is empty
 func checkDDIFlag(ddiF string) {
 	if len(ddiF) == 0 {
-		fmt.Printf("ipums2db: -ddi: must pass path to XML file (e.x. -ddi cps_001.xml)\n")
+		fmt.Printf("ipums2db: must pass path to XML file (e.x. -x cps_001.xml)\nsee --help for more\n")
 		os.Exit(2)
 	}
 }
@@ -152,11 +154,32 @@ func parseIndicesFlag(indF string) []string {
 // checkOneArg checks if either there is more than one argument provided, or if no arguments are provided
 func checkOneArg(args []string) {
 	if len(args) > 1 {
-		fmt.Printf("ipums2db: args: only provide one argument (path to .dat file)\n")
+		fmt.Printf("ipums2db: args: only provide one argument (path to .dat file)\nsee --help for more\n")
 		os.Exit(2)
 	}
 	if len(args) == 0 {
-		fmt.Printf("ipums2db: args: provide path to .dat file\n")
+		fmt.Printf("ipums2db: args: provide path to .dat file\nsee --help for more\n")
 		os.Exit(2)
 	}
+}
+
+// printUsage prints usage of ipums2db
+// this will need to be manually updated for future command updates,
+// but I think it's worth it
+func printUsage() {
+	usageStatement := `Usage: %s [options...] -x <xml> <dat>
+Flags:
+ -x <xml>                     DDI XML path (mandatory)
+ -b <dbType>                  Database type (default 'postgres')
+ -t <tabName>                 Table name (default 'ipums_tab')
+ -i <idx1[,idx2]>             Variable[s] to index on (default no idx)
+ -d                           Make directory format (default false)
+ -o <outFileOrDir>            File/Directory to output (default 'ipums_dump.sql')
+ -s                           Silent output (default false)
+
+Full Usage Example:
+ %s -b mysql -t mytab -i age,sex -o mydump.sql -x myACS.xml myACS.dat
+For more information, visit https://github.com/rhawrami/ipums2db
+`
+	fmt.Printf(usageStatement, os.Args[0], os.Args[0])
 }

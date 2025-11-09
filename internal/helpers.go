@@ -121,3 +121,36 @@ func PrintLoadingMessage(silent bool) {
 		fmt.Printf("\r%s", clearSpaces)
 	}
 }
+
+// MkDDL writes the DDL statement only; used for when only -x flag is passed, and not dat file arg
+func MkDDL(dbType, tabName, ddiFileName, outFileName string, idx []string, silence bool) error {
+	// DatabaseFormatter
+	dbfmtr, err := NewDBFormatter(dbType, tabName, true)
+	if err != nil {
+		return err
+	}
+	// DataDict
+	ddi, err := NewDataDict(ddiFileName)
+	if err != nil {
+		return err
+	}
+	// DDL writer
+	// change dat conversion default schema gen default
+	if outFileName == "ipums_dump.sql" {
+		outFileName = "ipums_DDL.sql"
+	}
+	dw, err := NewDumpWriterDDLOnly(outFileName)
+	if err != nil {
+		return err
+	}
+	// write it all
+	err = dw.WriteDDL(dbfmtr, &ddi, idx)
+	if err != nil {
+		dw.FileCleanup() // delete file if unable to write DDL
+		return err
+	}
+	if !silence {
+		fmt.Printf("DDL file written to %s\n", outFileName)
+	}
+	return nil
+}

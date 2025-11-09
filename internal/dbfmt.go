@@ -45,17 +45,17 @@ func getDataTypes(dbType string) (map[string]string, error) {
 		types2DBtypes["float"] = "number"
 		types2DBtypes["string"] = "varchar2"
 	default:
-		return nil, fmt.Errorf("unrecognized database type '%s' not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
+		return nil, fmt.Errorf("dbType '%s' not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
 	}
 
 	return types2DBtypes, nil
 }
 
 // NewDBFormatter returns a pointer to a DatabaseFormatter,
-// taking the database system, and main table name, as inputs
+// taking the database system, and main table name, and mkddl as inputs
 //
 // returns error if unrecognized/unsupported database system
-func NewDBFormatter(dbType, tableName string) (*DatabaseFormatter, error) {
+func NewDBFormatter(dbType, tableName string, mkddl bool) (*DatabaseFormatter, error) {
 	if len(tableName) == 0 {
 		return nil, fmt.Errorf("tableName can not be empty")
 	}
@@ -64,7 +64,12 @@ func NewDBFormatter(dbType, tableName string) (*DatabaseFormatter, error) {
 		return nil, fmt.Errorf("could not get data types: %w", err)
 	}
 
-	return &DatabaseFormatter{DbType: dbType, TableName: tableName, DataTypes: dataTypes}, nil
+	return &DatabaseFormatter{
+		DbType:    dbType,
+		TableName: tableName,
+		DataTypes: dataTypes,
+		mkddl:     mkddl,
+	}, nil
 }
 
 // DatabaseFormatter contains a relational database system identifier and
@@ -73,6 +78,7 @@ type DatabaseFormatter struct {
 	DbType    string
 	TableName string
 	DataTypes map[string]string
+	mkddl     bool
 }
 
 // CreateMainTable generates a SQL "CREATE TABLE" statement, given a data dictionary and table name,
@@ -253,6 +259,7 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte, colTypes ma
 	var insertStatement strings.Builder
 	insertStatement.WriteString("\t(")
 	for i, v := range ddi.Vars {
+
 		start, end := v.Location.Start-1, v.Location.End
 		if (start < 0) || (end > len(row)) {
 			return nil, fmt.Errorf("startAt %d & endAt %d not valid index range for sliceLen %d", start, end, len(row))
@@ -276,8 +283,11 @@ func (dbf *DatabaseFormatter) insertTuple(ddi *DataDict, row []byte, colTypes ma
 		case "string":
 			sChars = fmt.Sprintf("'%s'", string(chars))
 		case "float":
-			placeDecimalAt := len(chars) - v.DecimalPoint
-			chars = slices.Insert(chars, placeDecimalAt, byte('.'))
+			// for true float cases (not float due to width concerns)
+			if v.DecimalPoint != 0 {
+				placeDecimalAt := len(chars) - v.DecimalPoint
+				chars = slices.Insert(chars, placeDecimalAt, byte('.'))
+			}
 			sChars = string(chars)
 		case "int":
 			sChars = string(chars)
@@ -311,22 +321,14 @@ func (dbf *DatabaseFormatter) columnTypes(ddi *DataDict) map[string]string {
 // columnType is a helper function that returns the type that
 // a database column should have: options include ["int", "float", "string"]
 func (dbf *DatabaseFormatter) columnType(v Var) string {
-	// if a column has decimal point places > 0 -> must be float
-	if v.DecimalPoint > 0 {
-		return "float"
-	}
 	// if the variable type is a character type -> must be string
-	// if the variable has width > 10 -> must be string
-	// NOTE: the (width > 10) rule will occasionally trigger unnecessarily; leading
-	// zeros can be trimmed off and make widthActual <= 10; but this runs the risk of making
-	// the column an int type; then when inserting rows, a single row with widthActual > 10 will
-	// cause an insert statement not to go through. I prioritize insert success over occasionally
-	// misinterpreting a variable type. Type conversions, if needed, can occur after loading the data
-	// in; the inverse case, creating an int column and then inserting a tuple with the column variable
-	// having width > 10, cannot be recovered from without either manually updating the insert file, or
-	// changing the column type to string (again leading to manually updating the insert file)
-	if (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character") {
+	if v.VType.VarType == "character" {
 		return "string"
+	}
+	// if a column has decimal point places > 0 -> must be float
+	// if the variable has width > 10 -> must be float (with 0 decimal places)
+	if (v.DecimalPoint > 0) || (v.Location.Width > maxPlacesFori32) {
+		return "float"
 	}
 	// return int in all other cases
 	return "int"

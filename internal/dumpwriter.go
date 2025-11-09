@@ -92,8 +92,7 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 }
 
 // NewDumpWriterDDLOnly returns a new DumpWriter, meant only for DDL creation.
-// As the logic is much simpler here, it warrants a
-// seperate function.
+// As the logic is much simpler here, it warrants a seperate function.
 func NewDumpWriterDDLOnly(fileName string) (DumpWriter, error) {
 	f, err := os.Create(fileName)
 	if err != nil {

@@ -52,10 +52,10 @@ func getDataTypes(dbType string) (map[string]string, error) {
 }
 
 // NewDBFormatter returns a pointer to a DatabaseFormatter,
-// taking the database system, and main table name, as inputs
+// taking the database system, and main table name, and mkddl as inputs
 //
 // returns error if unrecognized/unsupported database system
-func NewDBFormatter(dbType, tableName string) (*DatabaseFormatter, error) {
+func NewDBFormatter(dbType, tableName string, mkddl bool) (*DatabaseFormatter, error) {
 	if len(tableName) == 0 {
 		return nil, fmt.Errorf("tableName can not be empty")
 	}
@@ -64,7 +64,12 @@ func NewDBFormatter(dbType, tableName string) (*DatabaseFormatter, error) {
 		return nil, fmt.Errorf("could not get data types: %w", err)
 	}
 
-	return &DatabaseFormatter{DbType: dbType, TableName: tableName, DataTypes: dataTypes}, nil
+	return &DatabaseFormatter{
+		DbType:    dbType,
+		TableName: tableName,
+		DataTypes: dataTypes,
+		mkddl:     mkddl,
+	}, nil
 }
 
 // DatabaseFormatter contains a relational database system identifier and
@@ -73,6 +78,7 @@ type DatabaseFormatter struct {
 	DbType    string
 	TableName string
 	DataTypes map[string]string
+	mkddl     bool
 }
 
 // CreateMainTable generates a SQL "CREATE TABLE" statement, given a data dictionary and table name,
@@ -97,10 +103,18 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 	default:
 	}
 
+	// handle mkddl subcommand
+	var colCriteriaFunc func(v Var) string
+	if dbf.mkddl {
+		colCriteriaFunc = dbf.columnTypeDDLOnly
+	} else {
+		colCriteriaFunc = dbf.columnType
+	}
+
 	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType strings.Builder
 		// get column type
-		switch colType := dbf.columnType(v); colType {
+		switch colType := colCriteriaFunc(v); colType {
 		case "float":
 			typeToUse.WriteString(fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint))
 		case "string":
@@ -148,6 +162,13 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) []byte {
 	var ddlStatement strings.Builder
 
+	// handle mkddl subcommand
+	var colCriteriaFunc func(v Var) string
+	if dbf.mkddl {
+		colCriteriaFunc = dbf.columnTypeDDLOnly
+	} else {
+		colCriteriaFunc = dbf.columnType
+	}
 	for _, v := range ddi.Vars {
 		if v.Interval == "discrete" {
 			tableName := "ref_" + strings.ToLower(v.Name)
@@ -155,7 +176,7 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) []byte {
 			refTable.WriteString(fmt.Sprintf("CREATE TABLE %s (", tableName))
 			// limit labels to 1000 characters, which should be far more than enough
 			maxCharsInLab := 1000
-			colType := dbf.columnType(v)
+			colType := colCriteriaFunc(v)
 			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s(%d)\n);\n\n", colType, dbf.DataTypes["string"], maxCharsInLab)
 			refTable.WriteString(catAndType)
 			ddlStatement.WriteString(refTable.String())
@@ -329,5 +350,19 @@ func (dbf *DatabaseFormatter) columnType(v Var) string {
 		return "string"
 	}
 	// return int in all other cases
+	return "int"
+}
+
+// columnTypeDDLOnly returns the database column type that a variable should have.
+//
+// This is meant to be used for the schema/DDL generation only, with CSV files, hence the lack of
+// checking the file width.
+func (dbf *DatabaseFormatter) columnTypeDDLOnly(v Var) string {
+	if v.DecimalPoint > 0 {
+		return "float"
+	}
+	if v.VType.VarType == "character" {
+		return "string"
+	}
 	return "int"
 }

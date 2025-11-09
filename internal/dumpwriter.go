@@ -91,6 +91,18 @@ func NewDumpWriter(totBytes int, writerName string, makeItDir bool) (DumpWriter,
 	return dw, nil
 }
 
+// NewDumpWriterDDLOnly returns a new DumpWriter, meant only for DDL creation.
+// As the logic is much simpler here, it warrants a
+// seperate function.
+func NewDumpWriterDDLOnly(fileName string) (DumpWriter, error) {
+	f, err := os.Create(fileName)
+	if err != nil {
+		return DumpWriter{}, err
+	}
+	dw := DumpWriter{SchemaFile: f, OutFiles: []*os.File{}}
+	return dw, nil
+}
+
 // WriteParsedResults spawns N := len(DumpWriter.OutFiles) outFile writers to write SQL insertion
 // statements to outFiles. It reads from a channel of ParsedResults, and writes successful results
 // to an outFile.
@@ -118,7 +130,8 @@ func (dw DumpWriter) WriteParsedResults(wg *sync.WaitGroup, parsedStream <-chan 
 func (dw DumpWriter) WriteDDL(dbfmtr *DatabaseFormatter, ddi *DataDict, indices []string) error {
 	// IF DIR FORMAT: once we write the DDL, we can close this file
 	// IF SINGLE FILE FORMAT: we cannot close the file yet. We still have inserts to make
-	if len(dw.OutFiles) > 1 {
+	// IF LEN(outFiles) == 0: we can close, as we are only generating DDL
+	if len(dw.OutFiles) > 1 || len(dw.OutFiles) == 0 {
 		defer dw.SchemaFile.Close()
 	}
 	// defer dw.SchemaFile.Close()

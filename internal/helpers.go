@@ -135,6 +135,10 @@ func MkDDL(dbType, tabName, ddiFileName, outFileName string, idx []string, silen
 		return err
 	}
 	// DDL writer
+	// change dat conversion default schema gen default
+	if outFileName == "ipums_dump.sql" {
+		outFileName = "ipums_DDL.sql"
+	}
 	dw, err := NewDumpWriterDDLOnly(outFileName)
 	if err != nil {
 		return err

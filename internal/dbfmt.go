@@ -45,7 +45,7 @@ func getDataTypes(dbType string) (map[string]string, error) {
 		types2DBtypes["float"] = "number"
 		types2DBtypes["string"] = "varchar2"
 	default:
-		return nil, fmt.Errorf("unrecognized database type '%s' not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
+		return nil, fmt.Errorf("dbType '%s' not in {'postgres', 'oracle', 'mysql', mssql'}", dbType)
 	}
 
 	return types2DBtypes, nil
@@ -103,18 +103,10 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 	default:
 	}
 
-	// handle mkddl subcommand
-	var colCriteriaFunc func(v Var) string
-	if dbf.mkddl {
-		colCriteriaFunc = dbf.columnTypeDDLOnly
-	} else {
-		colCriteriaFunc = dbf.columnType
-	}
-
 	for i, v := range ddi.Vars {
 		var typeToUse, nameAndType strings.Builder
 		// get column type
-		switch colType := colCriteriaFunc(v); colType {
+		switch colType := dbf.columnType(v); colType {
 		case "float":
 			typeToUse.WriteString(fmt.Sprintf("%s(%d,%d)", dbf.DataTypes["float"], v.Location.Width, v.DecimalPoint))
 		case "string":
@@ -162,13 +154,6 @@ func (dbf *DatabaseFormatter) CreateMainTable(ddi *DataDict) ([]byte, error) {
 func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) []byte {
 	var ddlStatement strings.Builder
 
-	// handle mkddl subcommand
-	var colCriteriaFunc func(v Var) string
-	if dbf.mkddl {
-		colCriteriaFunc = dbf.columnTypeDDLOnly
-	} else {
-		colCriteriaFunc = dbf.columnType
-	}
 	for _, v := range ddi.Vars {
 		if v.Interval == "discrete" {
 			tableName := "ref_" + strings.ToLower(v.Name)
@@ -176,7 +161,7 @@ func (dbf *DatabaseFormatter) CreateRefTables(ddi *DataDict) []byte {
 			refTable.WriteString(fmt.Sprintf("CREATE TABLE %s (", tableName))
 			// limit labels to 1000 characters, which should be far more than enough
 			maxCharsInLab := 1000
-			colType := colCriteriaFunc(v)
+			colType := dbf.columnType(v)
 			catAndType := fmt.Sprintf("\n\tval %s,\n\tlabel %s(%d)\n);\n\n", colType, dbf.DataTypes["string"], maxCharsInLab)
 			refTable.WriteString(catAndType)
 			ddlStatement.WriteString(refTable.String())
@@ -332,37 +317,15 @@ func (dbf *DatabaseFormatter) columnTypes(ddi *DataDict) map[string]string {
 // columnType is a helper function that returns the type that
 // a database column should have: options include ["int", "float", "string"]
 func (dbf *DatabaseFormatter) columnType(v Var) string {
-	// if a column has decimal point places > 0 -> must be float
-	if v.DecimalPoint > 0 {
-		return "float"
-	}
 	// if the variable type is a character type -> must be string
-	// if the variable has width > 10 -> must be string
-	// NOTE: the (width > 10) rule will occasionally trigger unnecessarily; leading
-	// zeros can be trimmed off and make widthActual <= 10; but this runs the risk of making
-	// the column an int type; then when inserting rows, a single row with widthActual > 10 will
-	// cause an insert statement not to go through. I prioritize insert success over occasionally
-	// misinterpreting a variable type. Type conversions, if needed, can occur after loading the data
-	// in; the inverse case, creating an int column and then inserting a tuple with the column variable
-	// having width > 10, cannot be recovered from without either manually updating the insert file, or
-	// changing the column type to string (again leading to manually updating the insert file)
-	if (v.Location.Width > maxPlacesFori32) || (v.VType.VarType == "character") {
-		return "string"
-	}
-	// return int in all other cases
-	return "int"
-}
-
-// columnTypeDDLOnly returns the database column type that a variable should have.
-//
-// This is meant to be used for the schema/DDL generation only, with CSV files, hence the lack of
-// checking the file width.
-func (dbf *DatabaseFormatter) columnTypeDDLOnly(v Var) string {
-	if v.DecimalPoint > 0 {
-		return "float"
-	}
 	if v.VType.VarType == "character" {
 		return "string"
 	}
+	// if a column has decimal point places > 0 -> must be float
+	// if the variable has width > 10 -> must be float (with 0 decimal places)
+	if (v.DecimalPoint > 0) || (v.Location.Width > maxPlacesFori32) {
+		return "float"
+	}
+	// return int in all other cases
 	return "int"
 }

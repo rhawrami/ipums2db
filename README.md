@@ -9,7 +9,45 @@ Per IPUMS, the [Integrated Public Use Microdata Series](https://www.ipums.org/).
 
 These files can often get very large, and loading the entire dataset into memory can either be cumbersome or not possible in some cases. `ipums2db` allows you to work with your ipums data in a traditional database system environment with the added (if you like SQL of course) bonus of using SQL syntax to query your data. 
 
+## installation
+
+### homebrew (recommended)
+```bash
+$ brew install rhawrami/ipums2db/ipums2db
+```
+
+### manual installation
+Prebuilt distributions for most platforms/architecutes are available in the [releases page](https://github.com/rhawrami/ipums2db/releases).
+
+### go install
+```bash
+$ go install github.com/rhawrami/ipums2db/cmd@latest
+
+# this installs ipums2db under the name `cmd`
+$ which cmd
+$ ~/go/bin/cmd
+
+# let's change the name
+$ mv ~/go/bin/cmd ~/go/bin/ipums2db
+```
 ## usage
+
+```bash
+$ ipums2db --help
+Usage: ipums2db [options...] -x <xml> <dat>
+Flags:
+ -x <xml>                     DDI XML path (mandatory)
+ -b <dbType>                  Database type (default 'postgres')
+ -t <tabName>                 Table name (default 'ipums_tab')
+ -i <idx1[,idx2]>             Variable[s] to index on (default no idx)
+ -d                           Make directory format (default false)
+ -o <outFileOrDir>            File/Directory to output (default 'ipums_dump.sql')
+ -s                           Silent output (default false)
+
+Full Usage Example:
+ ipums2db -b mysql -t mytab -i age,sex -o mydump.sql -x myACS.xml myACS.dat
+For more information, visit https://github.com/rhawrami/ipums2db
+```
 To properly convert your extract, you must have two files:
 
 1. A fixed width file holding your data (most often with a ".dat" extension); as of now, you will need to decompress your data prior to using it with `ipums2db`; this is fairly simple to do:

@@ -166,7 +166,7 @@ func checkOneArg(args []string, silence bool) {
 		fmt.Printf("ipums2db: args: only provide one argument (path to .dat file)\nsee --help for more\n")
 		os.Exit(2)
 	}
-	if len(args) == 0 {
+	if len(args) == 0 && silence {
 		fmt.Printf("%s: warning: generating only schema/DDL\n", os.Args[0])
 	}
 }

@@ -46,6 +46,11 @@ func NewJobConfig(totBytes int, nWriters int) JobConfig {
 	// at the same moment.
 	maxBPerJ := maxBytesofDatFileInMemory / (nParsers + nWriters)
 
+	// if maxBPerJ > totBytes, just make maxBPerJ = totBytes
+	if maxBPerJ > totBytes {
+		maxBPerJ = totBytes
+	}
+
 	return JobConfig{
 		ParsedResChanSize: parsedResChanSize,
 		NumParsers:        nParsers,
